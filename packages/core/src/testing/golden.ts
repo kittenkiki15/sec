@@ -22,6 +22,16 @@
  * - 空行がケースの区切り。
  * - ケース内で最初に現れる `=>` で始まる行から後ろが期待値。
  * - 行末の空白は無視される。
+ *
+ * セルに値が入った状態で評価したい場合は、式より前にシートディレクティブを置く
+ * （ADR-0009）。区切りはセルへの代入と同じ `:=`（ADR-0007 D-3）。
+ *
+ * ```text
+ * !A1 := 1
+ * !B1 := =A1 + 1
+ * B1
+ * => 2
+ * ```
  */
 
 /** ゴールデンテストの 1 ケース。 */
@@ -67,6 +77,9 @@ const COMMENT_PREFIX = '"';
 const EXPECT_PREFIX = '=>';
 const DIRECTIVE_PREFIX = '!';
 
+/** セルへの代入の記法に合わせる（ADR-0007 D-3 の `B14 := total`）。 */
+const DIRECTIVE_SEPARATOR = ':=';
+
 /** ADR-0007 D-2 のセル参照の形。`!` は二項セレクタの文字ではないので、式と衝突しない。 */
 const CELL_REFERENCE = /^[A-Z]+[0-9]+$/;
 
@@ -107,13 +120,14 @@ export function parseGoldenFile(text: string, fileName = '<golden>'): GoldenCase
   return blocks.map((block) => parseBlock(block, fileName));
 }
 
-/** `!A1 = 内容` の形のシートディレクティブを 1 行解析する。 */
+/** `!A1 := 内容` の形のシートディレクティブを 1 行解析する。 */
 function parseDirective(line: SourceLine, fileName: string): { cell: string; content: string } {
   const text = line.text.trimStart().slice(DIRECTIVE_PREFIX.length);
-  const separator = text.indexOf('=');
+  const separator = text.indexOf(DIRECTIVE_SEPARATOR);
   if (separator < 0) {
     throw new GoldenParseError(
-      `${fileName}:${line.no}: セルの指定は "!A1 = 内容" の形で書いてください。`,
+      `${fileName}:${line.no}: セルの指定は "!A1 := 内容" の形で書いてください。` +
+        `セルへの代入は ":=" と書きます（ADR-0007 D-3）。`,
       line.no,
     );
   }
@@ -127,8 +141,9 @@ function parseDirective(line: SourceLine, fileName: string): { cell: string; con
     );
   }
 
-  // 最初の `=` だけを区切りとする。内容の側に数式（`=A1 + 1`）を書けるようにするため。
-  const content = text.slice(separator + 1).trim();
+  // 最初の `:=` だけを区切りとする。内容の側に数式（`=A1 + 1`）や
+  // `:=` を含む文字列を書けるようにするため。
+  const content = text.slice(separator + DIRECTIVE_SEPARATOR.length).trim();
   if (content === '') {
     throw new GoldenParseError(
       `${fileName}:${line.no}: セル ${cell} の内容が空です。` +

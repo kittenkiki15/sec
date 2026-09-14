@@ -95,7 +95,7 @@ describe('parseGoldenFile のシートディレクティブ', () => {
   });
 
   it('セルの内容を読み取る', () => {
-    const text = ['!A1 = 1', '!A2 = 2', 'A1 + A2', '=> 3'].join('\n');
+    const text = ['!A1 := 1', '!A2 := 2', 'A1 + A2', '=> 3'].join('\n');
     const [testCase] = parseGoldenFile(text);
 
     expect(testCase?.source).toBe('A1 + A2');
@@ -105,18 +105,23 @@ describe('parseGoldenFile のシートディレクティブ', () => {
     ]);
   });
 
-  it('セルの内容に数式を置ける。最初の = だけが区切り', () => {
-    const [testCase] = parseGoldenFile(['!B1 = =A1 + 1', 'B1', '=> 2'].join('\n'));
+  it('セルの内容に数式を置ける。最初の := だけが区切り', () => {
+    const [testCase] = parseGoldenFile(['!B1 := =A1 + 1', 'B1', '=> 2'].join('\n'));
     expect(testCase?.sheet.get('B1')).toBe('=A1 + 1');
   });
 
+  it('内容に := を含められる。区切りは最初の 1 つだけ', () => {
+    const [testCase] = parseGoldenFile(["!A1 := 'a := b'", 'A1', "=> 'a := b'"].join('\n'));
+    expect(testCase?.sheet.get('A1')).toBe("'a := b'");
+  });
+
   it('区切りの前後の空白は無視する', () => {
-    const [testCase] = parseGoldenFile(['!A1="abc"', 'A1', "=> 'abc'"].join('\n'));
+    const [testCase] = parseGoldenFile(['!A1:="abc"', 'A1', "=> 'abc'"].join('\n'));
     expect(testCase?.sheet.get('A1')).toBe('"abc"');
   });
 
   it('ディレクティブはケースごとに独立している', () => {
-    const text = ['!A1 = 1', 'A1', '=> 1', '', 'A1', '=> nil'].join('\n');
+    const text = ['!A1 := 1', 'A1', '=> 1', '', 'A1', '=> nil'].join('\n');
     const cases = parseGoldenFile(text);
 
     expect(cases[0]?.sheet.size).toBe(1);
@@ -124,44 +129,51 @@ describe('parseGoldenFile のシートディレクティブ', () => {
   });
 
   it('式の開始行はディレクティブを飛ばした位置になる', () => {
-    const [testCase] = parseGoldenFile(['!A1 = 1', 'A1', '=> 1'].join('\n'));
+    const [testCase] = parseGoldenFile(['!A1 := 1', 'A1', '=> 1'].join('\n'));
     expect(testCase?.line).toBe(2);
   });
 
   it('式より後に置かれたディレクティブを拒否する', () => {
-    expect(() => parseGoldenFile(['A1', '!A1 = 1', '=> 1'].join('\n'), 'a.txt')).toThrow(
+    expect(() => parseGoldenFile(['A1', '!A1 := 1', '=> 1'].join('\n'), 'a.txt')).toThrow(
       /a\.txt:2: .*式より前/,
     );
   });
 
   it('同じセルを 2 回指定したら拒否する', () => {
-    expect(() => parseGoldenFile(['!A1 = 1', '!A1 = 2', 'A1', '=> 1'].join('\n'), 'a.txt')).toThrow(
-      /a\.txt:2: .*A1.*重複/,
-    );
+    expect(() =>
+      parseGoldenFile(['!A1 := 1', '!A1 := 2', 'A1', '=> 1'].join('\n'), 'a.txt'),
+    ).toThrow(/a\.txt:2: .*A1.*重複/);
   });
 
   it('セル参照の形でない指定を拒否する', () => {
     // ADR-0007 D-2 の形（大文字の英字 + 数字）だけを受け付ける。
     for (const bad of ['a1', 'A', '1A', 'Abc123', 'A1:B2']) {
-      expect(() => parseGoldenFile([`!${bad} = 1`, 'A1', '=> 1'].join('\n'), 'a.txt')).toThrow(
+      expect(() => parseGoldenFile([`!${bad} := 1`, 'A1', '=> 1'].join('\n'), 'a.txt')).toThrow(
         /セル参照/,
       );
     }
   });
 
-  it('区切りの = が無い指定を拒否する', () => {
+  it('区切りの := が無い指定を拒否する', () => {
     expect(() => parseGoldenFile(['!A1 1', 'A1', '=> 1'].join('\n'), 'a.txt')).toThrow(/a\.txt:1/);
+  });
+
+  it('区切りが = だけの指定を拒否する', () => {
+    // 代入は := と書く（ADR-0007 D-3）。= を黙って受け入れると 2 通りの書き方が生まれる。
+    expect(() => parseGoldenFile(['!A1 = 1', 'A1', '=> 1'].join('\n'), 'a.txt')).toThrow(
+      /a\.txt:1: .*":="/,
+    );
   });
 
   it('内容が空の指定を拒否する', () => {
     // 空セルを表したいなら、その行を書かない。D-6 が決まるまで空の意味を固定しない。
-    expect(() => parseGoldenFile(['!A1 =', 'A1', '=> nil'].join('\n'), 'a.txt')).toThrow(
+    expect(() => parseGoldenFile(['!A1 :=', 'A1', '=> nil'].join('\n'), 'a.txt')).toThrow(
       /a\.txt:1/,
     );
   });
 
   it('ディレクティブだけで式が無いケースを拒否する', () => {
-    expect(() => parseGoldenFile(['!A1 = 1', '=> 1'].join('\n'), 'a.txt')).toThrow(
+    expect(() => parseGoldenFile(['!A1 := 1', '=> 1'].join('\n'), 'a.txt')).toThrow(
       /式がありません/,
     );
   });
@@ -179,7 +191,7 @@ describe('runGoldenCases', () => {
   const cases: GoldenCase[] = [plainCase('3 + 4', '7', 1), plainCase('10 sqrt', '3.16', 4)];
 
   it('評価器にシートを渡す', () => {
-    const [testCase] = parseGoldenFile(['!A1 = 1', 'A1', '=> 1'].join('\n'));
+    const [testCase] = parseGoldenFile(['!A1 := 1', 'A1', '=> 1'].join('\n'));
     let received: ReadonlyMap<string, string> | undefined;
 
     runGoldenCases(testCase === undefined ? [] : [testCase], (_source, sheet) => {
