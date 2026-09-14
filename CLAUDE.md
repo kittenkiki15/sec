@@ -130,6 +130,14 @@ a := 3.
 - 判断に迷う仕様上の論点が出たら、勝手に決めずに `docs/adr/` を確認し、
   未決なら実装を止めて利用者に聞く。
 
+## マイルストーンのタグ付け
+
+マイルストーン完了時は Actions の **Tag milestone** ワークフローからタグと Release を作る
+（[ADR-0006](docs/adr/0006-milestone-tags.md)）。タグ名は `m0.5` / `m1` / `m3.5` の形式。
+
+**手元から `git push origin <tag>` はしない。** セッションによってはタグ ref の push が
+egress ポリシーで拒否される。ワークフローはこの制約を受けない。
+
 ## コミット
 
 - 1 行目は `<type>: <日本語の要約>`。type は `feat` / `fix` / `docs` / `test` / `refactor` / `chore` / `ci`。

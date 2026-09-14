@@ -1,0 +1,92 @@
+name: Tag milestone
+
+# マイルストーン完了時に、注釈付きタグと GitHub Release を作る。
+# Actions 画面の "Run workflow" から実行する。
+#
+# 手元の git から直接タグを push する運用にしていないのは、開発セッションの
+# egress ポリシーがタグ ref の push を許可しないことがあるため（ADR-0006）。
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'タグ名。m0.5 / m1 / m3.5 のようにマイルストーン番号で'
+        required: true
+        type: string
+      title:
+        description: 'Release のタイトル。例: M0.5: リポジトリ基盤'
+        required: true
+        type: string
+      notes:
+        description: 'Release の本文。空にすると直前のタグ以降の PR から自動生成する'
+        required: false
+        type: string
+      target:
+        description: 'タグを打つコミット SHA。空にすると main の先端'
+        required: false
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  tag:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # タグの重複確認に全履歴とタグが要る。
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          ref: main
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          package-manager-cache: false
+
+      # 入力は env 経由で渡す。run に直接埋め込むとスクリプト注入の余地ができるため。
+      - name: タグ名を検証
+        env:
+          TAG: ${{ inputs.tag }}
+        run: node .github/scripts/validate-milestone-tag.mjs "$TAG"
+
+      - name: タグを作成して push
+        env:
+          TAG: ${{ inputs.tag }}
+          TITLE: ${{ inputs.title }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          set -euo pipefail
+
+          # タグは実質的に取り消せないので、上書きせず必ず失敗させる。
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "::error::タグ $TAG は既に存在します。別の名前を指定してください。"
+            exit 1
+          fi
+
+          SHA="${TARGET:-$(git rev-parse HEAD)}"
+          if ! git cat-file -e "${SHA}^{commit}" 2>/dev/null; then
+            echo "::error::コミット $SHA が見つかりません。"
+            exit 1
+          fi
+
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$TAG" "$SHA" -m "$TITLE"
+          git push origin "refs/tags/$TAG"
+          echo "タグ $TAG を $SHA に作成しました。"
+
+      - name: Release を作成
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          TITLE: ${{ inputs.title }}
+          NOTES: ${{ inputs.notes }}
+        run: |
+          set -euo pipefail
+          if [ -n "$NOTES" ]; then
+            gh release create "$TAG" --title "$TITLE" --notes "$NOTES"
+          else
+            gh release create "$TAG" --title "$TITLE" --generate-notes
+          fi
