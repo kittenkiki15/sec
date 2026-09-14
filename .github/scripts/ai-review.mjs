@@ -19,6 +19,7 @@
  */
 
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 
 const { OPENAI_API_KEY, GITHUB_TOKEN, GITHUB_REPOSITORY, PR_NUMBER, AI_REVIEW_REASONING_EFFORT } =
   process.env;
@@ -29,6 +30,8 @@ const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || 'https://api.openai.com/v
 const MAX_DIFF_BYTES = Number(process.env.AI_REVIEW_MAX_DIFF_BYTES || 200_000);
 const MAX_FILE_BYTES = Number(process.env.AI_REVIEW_MAX_FILE_BYTES || 20_000);
 const MAX_FINDINGS = Number(process.env.AI_REVIEW_MAX_FINDINGS || 20);
+const PER_PAGE = 100;
+const MAX_FILE_PAGES = 10;
 
 const GUIDELINES_PATH = '.github/ai-review-guidelines.md';
 const MARKER = '<!-- ai-review:gpt -->';
@@ -84,14 +87,22 @@ async function gh(path, options = {}) {
   return res.status === 204 ? null : res.json();
 }
 
-async function fetchChangedFiles(repo, prNumber) {
+/**
+ * PR の変更ファイルを取得する。
+ * ページ上限に達した場合は truncated を立てて呼び出し元に知らせる。
+ * 黙って打ち切ると、レビューされなかったファイルがあることが誰にも分からなくなるため。
+ */
+export async function fetchChangedFiles(repo, prNumber, fetchPage) {
+  const getPage =
+    fetchPage ?? ((page) => gh(`/repos/${repo}/pulls/${prNumber}/files?per_page=100&page=${page}`));
+
   const files = [];
-  for (let page = 1; page <= 10; page += 1) {
-    const batch = await gh(`/repos/${repo}/pulls/${prNumber}/files?per_page=100&page=${page}`);
+  for (let page = 1; page <= MAX_FILE_PAGES; page += 1) {
+    const batch = await getPage(page);
     files.push(...batch);
-    if (batch.length < 100) break;
+    if (batch.length < PER_PAGE) return { files, truncated: false };
   }
-  return files;
+  return { files, truncated: true };
 }
 
 // --------------------------------------------------------------------------
@@ -102,7 +113,7 @@ async function fetchChangedFiles(repo, prNumber) {
  * unified diff の patch から、新しい側 (RIGHT) で行コメントを付けられる行番号を集める。
  * 追加行と文脈行が対象。削除行は新しい側に存在しないので除く。
  */
-function commentableLines(patch) {
+export function commentableLines(patch) {
   const lines = new Set();
   if (!patch) return lines;
   let newLine = 0;
@@ -121,12 +132,17 @@ function commentableLines(patch) {
   return lines;
 }
 
+const TRUNCATION_NOTICE = '\n… (この先は長さ上限のため省略)';
+
+/** 戻り値の長さが limit を超えないよう、注記の分をあらかじめ差し引いて切り詰める。 */
 function truncate(text, limit) {
   if (text.length <= limit) return { text, truncated: false };
-  return { text: `${text.slice(0, limit)}\n… (この先は長さ上限のため省略)`, truncated: true };
+  const room = Math.max(0, limit - TRUNCATION_NOTICE.length);
+  return { text: `${text.slice(0, room)}${TRUNCATION_NOTICE}`, truncated: true };
 }
 
-function buildDiffSections(files) {
+export function buildDiffSections(files, limits = {}) {
+  const { maxTotalBytes = MAX_DIFF_BYTES, maxFileBytes = MAX_FILE_BYTES } = limits;
   const sections = [];
   const skipped = [];
   let total = 0;
@@ -142,12 +158,14 @@ function buildDiffSections(files) {
       );
       continue;
     }
-    if (total >= MAX_DIFF_BYTES) {
-      skipped.push(`${file.filename} (差分全体の上限 ${MAX_DIFF_BYTES} バイトに到達)`);
+    // 追加後の合計で判断しないと、1 ファイル分だけ上限を超えて送信してしまう。
+    const remaining = maxTotalBytes - total;
+    if (remaining <= 0) {
+      skipped.push(`${file.filename} (差分全体の上限 ${maxTotalBytes} バイトに到達)`);
       continue;
     }
 
-    const { text, truncated } = truncate(file.patch, MAX_FILE_BYTES);
+    const { text, truncated } = truncate(file.patch, Math.min(maxFileBytes, remaining));
     total += text.length;
     sections.push(
       `### ${file.filename} (${file.status}, +${file.additions} -${file.deletions})` +
@@ -395,8 +413,14 @@ async function main() {
     return;
   }
 
-  const files = await fetchChangedFiles(repo, prNumber);
+  const { files, truncated: fileListTruncated } = await fetchChangedFiles(repo, prNumber);
   const { sections, skipped, totalBytes } = buildDiffSections(files);
+
+  if (fileListTruncated) {
+    skipped.push(
+      `変更ファイルが ${PER_PAGE * MAX_FILE_PAGES} 件を超えたため、以降のファイルは取得していません。`,
+    );
+  }
 
   if (!sections.length) {
     notice('レビュー対象のファイルがありません。');
@@ -469,4 +493,7 @@ async function main() {
   );
 }
 
-main().catch((error) => fail(error.stack || String(error)));
+// import してテストできるよう、直接実行されたときだけ main を走らせる。
+if (process.argv[1] === fileURLToPath(import.meta.url)) {
+  main().catch((error) => fail(error.stack || String(error)));
+}

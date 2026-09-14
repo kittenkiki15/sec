@@ -14,7 +14,8 @@ permissions:
   contents: read
   pull-requests: write
 
-# 同じ PR に連続でプッシュしたときは、最新のコミットに対するレビューだけを残す。
+# 同じ PR に連続でプッシュしたとき、まだ実行中の古いレビューを止めて無駄な API 呼び出しを避ける。
+# 既に投稿されたレビューはキャンセルできないため、PR には履歴として残る。
 concurrency:
   group: ai-review-${{ github.event.pull_request.number || inputs.pr_number }}
   cancel-in-progress: true
