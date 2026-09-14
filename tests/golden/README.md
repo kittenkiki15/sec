@@ -68,8 +68,8 @@ B1
 | §1 字句 / §2 リテラル | `literals.txt` |
 | §3 メッセージ式 | `messages.txt` |
 | §3.5 優先順位 | `precedence.txt` |
-| §4 セル参照と範囲 | `references.txt` / `ranges.txt`（未作成） |
-| §5 ブロックと条件 | `blocks.txt` / `conditionals.txt`（未作成） |
+| §4 セル参照と範囲 | `references.txt` / `ranges.txt` |
+| §5 ブロックと条件 | `blocks.txt` / `conditionals.txt` |
 | §6 組み込みクラス | `numbers.txt` / `strings.txt` / `collections.txt`（未作成） |
 | §7 マクロ | `macros.txt` / `assignment.txt`（未作成） |
 

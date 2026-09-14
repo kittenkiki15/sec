@@ -1,0 +1,149 @@
+"言語仕様書 §5（条件式）に対応するゴールデンテスト。
+"ブロックそのものは blocks.txt に分けてある。
+"
+"条件式はすべて遅延評価であること（要件 F-2-9）。評価されない側にエラーがあっても
+"発火しないことを、各セレクタについて確かめている。
+
+"--- ifTrue: ---
+
+true ifTrue: [1]
+=> 1
+
+"偽のときは nil を返す
+false ifTrue: [1]
+=> nil
+
+"--- ifFalse: ---
+
+false ifFalse: [2]
+=> 2
+
+true ifFalse: [2]
+=> nil
+
+"--- ifTrue:ifFalse: ---
+
+"キーワードは連結して 1 つのセレクタになる（§3.4）
+true ifTrue: [1] ifFalse: [2]
+=> 1
+
+false ifTrue: [1] ifFalse: [2]
+=> 2
+
+"--- ifFalse:ifTrue: ---
+
+"順序を入れ替えた形も別のセレクタとして理解する
+true ifFalse: [1] ifTrue: [2]
+=> 2
+
+false ifFalse: [1] ifTrue: [2]
+=> 1
+
+"--- 遅延評価 ---
+
+"選ばれなかった側は評価されない。評価されればゼロ除算になる
+true ifTrue: [1] ifFalse: [1 / 0]
+=> 1
+
+false ifTrue: [1 / 0] ifFalse: [2]
+=> 2
+
+"ifFalse:ifTrue: は別のセレクタなので、遅延評価も別に固定する必要がある
+true ifFalse: [1 / 0] ifTrue: [2]
+=> 2
+
+false ifFalse: [1] ifTrue: [1 / 0]
+=> 1
+
+true ifTrue: [1 / 0]
+=> #DivideByZero
+
+false ifTrue: [1 / 0]
+=> nil
+
+true ifFalse: [1 / 0]
+=> nil
+
+"--- ifNil: ---
+
+nil ifNil: [0]
+=> 0
+
+"nil でなければ受け手をそのまま返す
+1 ifNil: [0]
+=> 1
+
+'abc' ifNil: [0]
+=> 'abc'
+
+"false は nil ではない
+false ifNil: [0]
+=> false
+
+"受け手が nil でなければ引数は評価されない
+1 ifNil: [1 / 0]
+=> 1
+
+"--- ifEmpty: ---
+
+'' ifEmpty: ['空']
+=> '空'
+
+'abc' ifEmpty: ['空']
+=> 'abc'
+
+#() ifEmpty: ['空']
+=> '空'
+
+#(1 2) ifEmpty: ['空']
+=> #(1 2)
+
+"受け手が空でなければ引数は評価されない
+'abc' ifEmpty: [1 / 0]
+=> 'abc'
+
+"--- 条件式とセル参照 ---
+
+!A1 := 3
+A1 > 2 ifTrue: ['大'] ifFalse: ['小']
+=> '大'
+
+!A1 := 1
+A1 > 2 ifTrue: ['大'] ifFalse: ['小']
+=> '小'
+
+"委譲によって、セルの値が nil かどうかも判定できる
+!A1 := 1
+A1 ifNil: [0]
+=> 1
+
+"--- 引数はブロックでなければならない ---
+
+"遅延評価が要件（F-2-9）なので、値を直接渡すことはできない
+true ifTrue: 1
+=> #TypeError
+
+true ifTrue: [1] ifFalse: 2
+=> #TypeError
+
+"--- 受け手が真偽値でない ---
+
+3 ifTrue: [1]
+=> #DoesNotUnderstand
+
+'abc' ifTrue: [1] ifFalse: [2]
+=> #DoesNotUnderstand
+
+"nil も ifTrue: を理解しない。nil の判定は ifNil: で行う
+nil ifTrue: [1]
+=> #DoesNotUnderstand
+
+"--- 括弧なしの入れ子はできない ---
+
+"キーワードを 3 つ並べると 1 つのセレクタになり、そのようなセレクタは無い（§3.4）
+true ifTrue: [1] ifFalse: [2] ifTrue: [3]
+=> #DoesNotUnderstand
+
+"括弧で分ければ 2 つの送信になる
+(true ifTrue: [false] ifFalse: [true]) ifTrue: [1] ifFalse: [2]
+=> 2
