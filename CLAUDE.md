@@ -92,6 +92,10 @@ packages/mcp    MCP サーバー
 
 例外を適用したときは、その理由を報告する。黙って適用しない。
 
+**CI やツールのスクリプト（`.github/scripts/` 配下）もテスト対象。** 「設定ファイル」の例外に
+含めない。振る舞いを持つコードである以上、扱いを変える理由がない。
+テストは `.github/scripts/**/*.test.mjs` に置く（`vitest.config.ts` の対象に含めてある）。
+
 ## ゴールデンテスト
 
 `tests/golden/*.txt` が言語仕様の実体。ハーネスは `packages/core/src/testing/golden.ts`。
