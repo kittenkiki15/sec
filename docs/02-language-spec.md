@@ -338,9 +338,9 @@ binary expression  = unary expression , { binary selector , unary expression } ;
 unary expression   = primary , { unary selector } ;
 primary            = literal
                    | identifier
-                   | cell reference        (* §4 *)
-                   | range                 (* §4 *)
-                   | block                 (* §5 *)
+                   | cell reference        (* §4.1 *)
+                   | range token           (* §4.3。字句規則で切り出す 1 つのトークン *)
+                   | block                 (* §5.1 *)
                    | "(" , expression , ")" ;
 ```
 
@@ -590,8 +590,9 @@ range token = cell reference , ( ".." | ":" ) , cell reference ;
 - **トークンの内部に空白を挟めないことが、そのまま糖衣の空白規則になる。**
   `A1 .. B10` `A1.. B10` `A1 ..B10` はいずれも範囲トークンにならず `#Syntax`。
   コロン形式も同じ。コメント（`A1"c"..B10`）と改行も、§1.1 が空白と同じ扱いにしているため挟めない。
-- `A1..B10` と `A1:B10` は**糖衣**であり、**構文解析の時点で `to:` の送信へ脱糖する。**
-  構文規則としては §3.1 の `primary` に現れる `range` がこのトークンを指す。
+- `A1..B10` と `A1:B10` は**糖衣**であり、**構文解析の時点で
+  `cell reference , "to:" , cell reference` の送信へ脱糖する。**
+  このトークンは §3.1 の `primary` の選択肢 `range token` として式に現れる。
 - 正準形 `A1 to: B10` は 3 つのトークンからなる通常のメッセージ式なので、
   通常の空白規則に従う（`A1 to:B10` と書ける）。
 
