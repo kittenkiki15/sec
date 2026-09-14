@@ -105,6 +105,29 @@ A1 + B1
 B1 + A1
 => #DoesNotUnderstand
 
+"--- 空セルを含む算術（ADR-0010） ---
+
+"指定の無いセルは空で、値は nil。委譲（§4.2）に例外を作らないので算術はエラーになる。
+"Excel は両方 1 を返すため、ここは意図的な乖離。
+"受け手が nil なら、nil が + を理解しない
+A1 + 1
+=> #DoesNotUnderstand
+
+"引数が nil なら、Number は + を理解するので型の誤りになる。向きで種別が変わる
+1 + A1
+=> #TypeError
+
+"nil を直接書いても同じ。空セルだけの特別扱いは無い
+nil + 1
+=> #DoesNotUnderstand
+
+1 + nil
+=> #TypeError
+
+"ifNil: なら受け手が nil でも通る（§5.2）
+A1 ifNil: [0]
+=> 0
+
 "存在しないセルの参照（§4.1）も同じ順序に従う
 A0 + (1 / 0)
 => #Ref
