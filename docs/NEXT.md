@@ -30,7 +30,7 @@
 
 | PR | 内容 | フィクスチャ | 状態 |
 | --- | --- | --- | --- |
-| A | ADR-0010〜0012、§6.0 共通規則、§6.1 `Number` | `errors.txt` / `numbers.txt` | **済み** |
+| A | ADR-0010〜0013、§6.0 共通規則、§6.1 `Number` | `errors.txt` / `numbers.txt` | **済み** |
 | B | §6.2 `String` / `Boolean` / `Symbol` / `nil` | `strings.txt` | これから |
 | C | §6.3 `Array` / `Range` / `Cell`、セレクタ網羅の検査 | `collections.txt` | これから |
 
