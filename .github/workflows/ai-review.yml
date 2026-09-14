@@ -47,6 +47,10 @@ jobs:
       - uses: actions/setup-node@v5
         with:
           node-version: '22'
+          # setup-node は既定で packageManager を見てパッケージマネージャの
+          # キャッシュを試み、pnpm が PATH に無いと失敗する。
+          # レビュースクリプトは依存パッケージを持たないためキャッシュ自体が不要。
+          package-manager-cache: false
 
       - name: レビューを実行
         env:
