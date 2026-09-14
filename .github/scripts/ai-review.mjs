@@ -20,13 +20,8 @@
 
 import { readFile } from 'node:fs/promises';
 
-const {
-  OPENAI_API_KEY,
-  GITHUB_TOKEN,
-  GITHUB_REPOSITORY,
-  PR_NUMBER,
-  AI_REVIEW_REASONING_EFFORT,
-} = process.env;
+const { OPENAI_API_KEY, GITHUB_TOKEN, GITHUB_REPOSITORY, PR_NUMBER, AI_REVIEW_REASONING_EFFORT } =
+  process.env;
 
 const MODEL = process.env.AI_REVIEW_MODEL || 'gpt-5.6-terra';
 const LANGUAGE = process.env.AI_REVIEW_LANGUAGE || 'ja';
@@ -80,7 +75,9 @@ async function gh(path, options = {}) {
   });
   if (!res.ok) {
     const body = await res.text();
-    const error = new Error(`GitHub API ${options.method || 'GET'} ${path} -> ${res.status}: ${body}`);
+    const error = new Error(
+      `GitHub API ${options.method || 'GET'} ${path} -> ${res.status}: ${body}`,
+    );
     error.status = res.status;
     throw error;
   }
@@ -140,7 +137,9 @@ function buildDiffSections(files) {
       continue;
     }
     if (!file.patch) {
-      skipped.push(`${file.filename} (差分が大きすぎる、またはバイナリのため GitHub が patch を返さず)`);
+      skipped.push(
+        `${file.filename} (差分が大きすぎる、またはバイナリのため GitHub が patch を返さず)`,
+      );
       continue;
     }
     if (total >= MAX_DIFF_BYTES) {
@@ -226,7 +225,10 @@ async function callOpenAI(payload) {
     const body = await res.text();
 
     if (res.status === 400) {
-      const unsupported = /Unsupported parameter: '([^']+)'|Unrecognized request argument supplied: (\w+)|'(\w+)' is not supported/.exec(body);
+      const unsupported =
+        /Unsupported parameter: '([^']+)'|Unrecognized request argument supplied: (\w+)|'(\w+)' is not supported/.exec(
+          body,
+        );
       const param = unsupported && (unsupported[1] || unsupported[2] || unsupported[3]);
       if (param && param in payload) {
         notice(`モデル ${MODEL} はパラメータ ${param} を受け付けないため、除外して再試行します。`);
@@ -277,7 +279,9 @@ function buildMessages({ pr, guidelines, diffText, skipped }) {
     '',
     '## 差分',
     diffText,
-    skipped.length ? `\n## レビュー対象外のファイル\n${skipped.map((s) => `- ${s}`).join('\n')}` : '',
+    skipped.length
+      ? `\n## レビュー対象外のファイル\n${skipped.map((s) => `- ${s}`).join('\n')}`
+      : '',
   ]
     .filter(Boolean)
     .join('\n');
@@ -311,12 +315,7 @@ function renderFinding(finding, { withLocation }) {
 }
 
 function renderBody({ summary, orphans, skipped, truncatedNote }) {
-  const sections = [
-    MARKER,
-    `## 🤖 AI コードレビュー (\`${MODEL}\`)`,
-    '',
-    summary,
-  ];
+  const sections = [MARKER, `## 🤖 AI コードレビュー (\`${MODEL}\`)`, '', summary];
 
   if (orphans.length) {
     sections.push(
