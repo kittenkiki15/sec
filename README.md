@@ -12,6 +12,7 @@ Smalltalk 風の言語で数式やマクロを記述できる、Excel 風スプ�
 | [設計判断の記録](docs/adr/) | ADR。仕様に関わる判断は必ずここを確認してから |
 | [ADR-0004 テスト駆動開発](docs/adr/0004-tdd.md) | 本プロジェクトはテスト駆動開発で進める |
 | [CLAUDE.md](CLAUDE.md) | Claude Code 向けの作業規約 |
+| [次の一歩](docs/NEXT.md) | 現在地と次にやること |
 
 ## 開発
 
