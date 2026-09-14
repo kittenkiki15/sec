@@ -10,6 +10,7 @@ Smalltalk 風の言語で数式やマクロを記述できる、Excel 風スプ�
 | [要件定義書](docs/01-requirements.md) | 目的・スコープ・機能／非機能要件・未決の設計論点 |
 | [PR 自動レビュー](docs/03-ai-review.md) | GitHub Actions から OpenAI API を呼ぶ自動レビューの設定と運用 |
 | [設計判断の記録](docs/adr/) | ADR。仕様に関わる判断は必ずここを確認してから |
+| [ADR-0004 テスト駆動開発](docs/adr/0004-tdd.md) | 本プロジェクトはテスト駆動開発で進める |
 | [CLAUDE.md](CLAUDE.md) | Claude Code 向けの作業規約 |
 
 ## 開発
