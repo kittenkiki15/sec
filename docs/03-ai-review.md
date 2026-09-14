@@ -43,8 +43,11 @@ GitHub 組み込みの Copilot code review は PR 作成時の自動実行には
 
 ## 動作
 
-- **起動条件**: PR の `opened` / `synchronize` / `reopened` / `ready_for_review`。
+- **起動条件**: `pull_request_target` の `opened` / `synchronize` / `reopened` / `ready_for_review`。
   加えて Actions 画面から PR 番号を指定して手動実行できます。
+  `pull_request` ではなく `pull_request_target` を使う理由は [ADR-0005](adr/0005-ai-review-trigger.md)。
+  **ワークフロー定義とスクリプトは常にベースブランチから読まれます。**
+  そのため、このワークフロー自体の変更は `main` にマージされるまで効きません。
 - **スキップ条件**: ドラフト PR、`no-ai-review` ラベル付きの PR、フォークからの PR
   （フォークにはシークレットが渡らないため）。
 - **レビュー対象外**: ロックファイル、`dist/` `build/` `out/` `coverage/` 配下、
@@ -78,9 +81,12 @@ OpenAI の従量課金が発生します。差分と方針ファイルが入力�
   原理的に防げません。そのためワークフローは権限を `contents: read` と
   `pull-requests: write` に絞り、承認もマージも行わない設計にしています。
   レビュー結果は参考情報であり、マージの判断は人間が行ってください。
-- フォークからの PR ではワークフローが動きません（シークレット漏洩を避けるため）。
-  外部からの貢献を受け付けるようになったら、`pull_request_target` を使うのではなく、
-  メンテナが手動実行（`workflow_dispatch`）する運用を推奨します。
+- **`pull_request_target` で起動するため、PR のコードを絶対に checkout しないでください。**
+  `checkout` に `ref` を与えて PR の内容を取り込んだ瞬間、シークレットを持ったまま
+  任意のコードを実行することになります。このワークフローは差分を GitHub API から
+  取得するため、PR のコードを取得する必要がありません。
+- フォークからの PR は現在も対象外にしています。`pull_request_target` なら安全に
+  レビューできますが、対象を広げるかどうかは別途判断します。
 
 ## うまく動かないとき
 

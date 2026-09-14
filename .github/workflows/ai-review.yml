@@ -1,7 +1,16 @@
 name: AI code review
 
+# pull_request ではなく pull_request_target を使う。
+# pull_request は PR 側のワークフロー定義を実行するため、このリポジトリに push できる人が
+# PR 内でこのファイルを書き換え、OPENAI_API_KEY を外部へ送信できてしまう（ADR-0005）。
+# pull_request_target はベースブランチの定義を実行するので、その経路が塞がれる。
+#
+# ⚠️ pull_request_target では PR のコードを絶対に checkout しないこと。
+#    checkout に ref を与えて PR の内容を取り込んだ瞬間、シークレットを持ったまま
+#    任意のコードを実行することになる。このワークフローは差分を GitHub API から
+#    取得するため、PR のコードを取得する必要がない。
 on:
-  pull_request:
+  pull_request_target:
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
     inputs:
@@ -43,7 +52,11 @@ jobs:
             exit 1
           fi
 
+      # ref を指定しない。ベースブランチのスクリプトと方針ファイルだけを取得する。
+      # ここに PR の ref を足してはならない（上の警告を参照）。
       - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
 
       - uses: actions/setup-node@v5
         with:

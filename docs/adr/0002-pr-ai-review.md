@@ -32,8 +32,11 @@
   ワークフローの権限を `contents: read` と `pull-requests: write` に絞り、
   イベントは常に `COMMENT` とする。**承認もマージもさせない。**
 - フォークからの PR では動かない（シークレットが渡らないため）。
-  外部からの貢献を受けるようになったら `pull_request_target` は使わず、
-  メンテナによる手動実行（`workflow_dispatch`）で運用する。
+  ~~外部からの貢献を受けるようになったら `pull_request_target` は使わず、
+  メンテナによる手動実行（`workflow_dispatch`）で運用する。~~
+  **この記述は [ADR-0005](0005-ai-review-trigger.md) で訂正した。**
+  フォークからの貢献だけを想定しており、同一リポジトリの PR からシークレットを
+  抜き取れる経路を扱っていなかった。起動イベントは `pull_request_target` に変更した。
 
 ## 覆すとしたら
 
