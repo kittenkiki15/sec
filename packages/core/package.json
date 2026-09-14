@@ -1,0 +1,9 @@
+{
+  "name": "@sec/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./testing": "./src/testing/index.ts"
+  }
+}

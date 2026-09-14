@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // core はブラウザ API にも Node API にも依存しない（要件 N-8）。
+    // DOM と @types/node をあえて読み込まないことで、違反を型エラーとして検出する。
+    "lib": ["ES2023"],
+    "types": []
+  },
+  "include": ["src/**/*.ts"]
+}

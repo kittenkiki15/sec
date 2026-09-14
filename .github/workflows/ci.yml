@@ -1,0 +1,52 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          cache: pnpm
+
+      - name: 依存関係をインストール
+        run: pnpm install --frozen-lockfile
+
+      # 失敗しても後続を実行し、1 回の実行で問題を洗い出す。
+      - name: 型検査
+        if: '!cancelled()'
+        run: pnpm typecheck
+
+      - name: Lint とフォーマット検査
+        if: '!cancelled()'
+        run: pnpm lint
+
+      - name: テストとカバレッジ
+        if: '!cancelled()'
+        run: pnpm coverage
+
+      - name: カバレッジレポートを保存
+        if: '!cancelled()'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage
+          path: coverage/
+          retention-days: 7

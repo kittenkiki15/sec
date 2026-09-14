@@ -1,0 +1,78 @@
+name: AI code review
+
+# pull_request ではなく pull_request_target を使う。
+# pull_request は PR 側のワークフロー定義を実行するため、このリポジトリに push できる人が
+# PR 内でこのファイルを書き換え、OPENAI_API_KEY を外部へ送信できてしまう（ADR-0005）。
+# pull_request_target はベースブランチの定義を実行するので、その経路が塞がれる。
+#
+# ⚠️ pull_request_target では PR のコードを絶対に checkout しないこと。
+#    checkout に ref を与えて PR の内容を取り込んだ瞬間、シークレットを持ったまま
+#    任意のコードを実行することになる。このワークフローは差分を GitHub API から
+#    取得するため、PR のコードを取得する必要がない。
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: レビュー対象の PR 番号
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# 同じ PR に連続でプッシュしたとき、まだ実行中の古いレビューを止めて無駄な API 呼び出しを避ける。
+# 既に投稿されたレビューはキャンセルできないため、PR には履歴として残る。
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # フォークからの PR にはシークレットが渡らないため対象外。
+    # ドラフトと no-ai-review ラベルの付いた PR もスキップする。
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.pull_request.draft == false &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        !contains(github.event.pull_request.labels.*.name, 'no-ai-review')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: シークレットの確認
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::error::シークレット OPENAI_API_KEY が未設定です。リポジトリの Settings → Secrets and variables → Actions で登録してください。"
+            exit 1
+          fi
+
+      # ref を指定しない。ベースブランチのスクリプトと方針ファイルだけを取得する。
+      # ここに PR の ref を足してはならない（上の警告を参照）。
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+          # setup-node は既定で packageManager を見てパッケージマネージャの
+          # キャッシュを試み、pnpm が PATH に無いと失敗する。
+          # レビュースクリプトは依存パッケージを持たないためキャッシュ自体が不要。
+          package-manager-cache: false
+
+      - name: レビューを実行
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+          AI_REVIEW_MODEL: ${{ vars.AI_REVIEW_MODEL || 'gpt-5.6-terra' }}
+          AI_REVIEW_LANGUAGE: ${{ vars.AI_REVIEW_LANGUAGE || 'ja' }}
+          AI_REVIEW_REASONING_EFFORT: ${{ vars.AI_REVIEW_REASONING_EFFORT }}
+        run: node .github/scripts/ai-review.mjs
