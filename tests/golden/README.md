@@ -33,5 +33,20 @@ a := 3.
 
 ## ファイルの割り当て
 
-言語仕様書（`docs/02-language-spec.md`、M0 で作成）の節ごとにファイルを対応させます。
-仕様書が確定した時点でここに一覧を書きます。
+[言語仕様書](../../docs/02-language-spec.md)の節ごとにファイルを対応させます。
+
+| 節 | ファイル |
+| --- | --- |
+| §1 字句 / §2 リテラル | `literals.txt` |
+| §3 メッセージ式 | `messages.txt` |
+| §3.5 優先順位 | `precedence.txt` |
+| §4 セル参照と範囲 | `references.txt` / `ranges.txt`（未作成） |
+| §5 ブロックと条件 | `blocks.txt` / `conditionals.txt`（未作成） |
+| §6 組み込みクラス | `numbers.txt` / `strings.txt` / `collections.txt`（未作成） |
+| §7 マクロ | `macros.txt` / `assignment.txt`（未作成） |
+
+## 形式の検証
+
+`format.test.mjs` が、このディレクトリの `*.txt` をすべて `parseGoldenFile` で解析できることを
+検証します。**評価器が無い間、フィクスチャに対して走る唯一のテストです。**
+期待値が合っているかは検証しません（評価器ができてから）。
