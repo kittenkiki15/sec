@@ -1,0 +1,165 @@
+"真偽値・シンボル・nil のセレクタ。仕様書 §6.2 に対応する。
+"
+"どれも単独でファイルを作るほどの量が無いのでまとめてある。
+"条件式（ifTrue: など）は §5.2 で、conditionals.txt にある。
+
+"--- 真偽値の論理演算（先行評価）---
+
+true & true
+=> true
+
+true & false
+=> false
+
+false & true
+=> false
+
+true | false
+=> true
+
+false | false
+=> false
+
+"& と | は先行評価。引数は送信の前に評価される（§3.6）ので、
+"受け手が false でも引数のエラーが表に出る
+false & (1 / 0)
+=> #DivideByZero
+
+true | (1 / 0)
+=> #DivideByZero
+
+"--- 真偽値の論理演算（遅延評価）---
+
+"and: と or: はブロックを取るので、選ばれなければ評価されない
+true and: [false]
+=> false
+
+false and: [1 / 0]
+=> false
+
+true or: [1 / 0]
+=> true
+
+false or: [true]
+=> true
+
+"引数がブロックでなければ型の誤り（§5.2 の条件式と同じ理由）
+true and: false
+=> #TypeError
+
+false or: true
+=> #TypeError
+
+"--- not ---
+
+true not
+=> false
+
+false not
+=> true
+
+"--- 真偽値の比較 ---
+
+true = true
+=> true
+
+true = false
+=> false
+
+true ~= false
+=> true
+
+"型が違ってもエラーにならない
+true = 1
+=> false
+
+true = nil
+=> false
+
+"--- 真偽値が理解しないもの ---
+
+"引数が真偽値でなければ型の誤り
+true & 1
+=> #TypeError
+
+true | nil
+=> #TypeError
+
+"受け手が真偽値でなければ、そもそも & を理解しない
+1 & true
+=> #DoesNotUnderstand
+
+1 not
+=> #DoesNotUnderstand
+
+'abc' not
+=> #DoesNotUnderstand
+
+"--- nil ---
+
+nil isNil
+=> true
+
+nil notNil
+=> false
+
+"isNil と notNil はすべての値が理解する
+1 isNil
+=> false
+
+1 notNil
+=> true
+
+'' isNil
+=> false
+
+false isNil
+=> false
+
+nil = nil
+=> true
+
+nil = false
+=> false
+
+nil ~= nil
+=> false
+
+"nil は真偽値ではないので論理演算を理解しない
+nil not
+=> #DoesNotUnderstand
+
+nil size
+=> #DoesNotUnderstand
+
+"--- シンボル ---
+
+#foo = #foo
+=> true
+
+#foo = #bar
+=> false
+
+#foo ~= #bar
+=> true
+
+"キーワードセレクタのシンボルも同じ（§2.3）
+#at:put: = #at:put:
+=> true
+
+#at:put: = #at:
+=> false
+
+"シンボルと文字列は別のクラス。両向きとも等しくない
+#foo = 'foo'
+=> false
+
+'foo' = #foo
+=> false
+
+"シンボルは識別子であって文字の並びとして扱わない
+#foo size
+=> #DoesNotUnderstand
+
+#foo asUppercase
+=> #DoesNotUnderstand

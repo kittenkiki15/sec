@@ -1,0 +1,236 @@
+"文字列のセレクタ。仕様書 §6.2 に対応する。
+"
+"添字は 1 起点。範囲外は #SubscriptOutOfBounds（ADR-0014）。
+"文字型は持たないので、indexOf: は部分文字列を取る。
+
+"--- 連結 ---
+
+'ab' , 'cd'
+=> 'abcd'
+
+'' , 'abc'
+=> 'abc'
+
+'abc' , ''
+=> 'abc'
+
+"引数が文字列でなければ型の誤り
+'abc' , 1
+=> #TypeError
+
+'abc' , nil
+=> #TypeError
+
+"受け手が文字列でなければ、そもそも , を理解しない
+1 , 'abc'
+=> #DoesNotUnderstand
+
+"--- size ---
+
+'abc' size
+=> 3
+
+'' size
+=> 0
+
+"引用符の中の二重引用符は 1 文字（§2.2）
+'It''s' size
+=> 4
+
+"--- 大文字と小文字 ---
+
+'abc' asUppercase
+=> 'ABC'
+
+'ABC' asLowercase
+=> 'abc'
+
+"英字でない文字はそのまま
+'a1!' asUppercase
+=> 'A1!'
+
+'' asUppercase
+=> ''
+
+"--- indexOf: ---
+
+"添字は 1 起点
+'abc' indexOf: 'a'
+=> 1
+
+'abc' indexOf: 'c'
+=> 3
+
+"部分文字列を取る。文字型は持たない
+'abcd' indexOf: 'bc'
+=> 2
+
+"見つからなければ 0（Smalltalk-80）。1 起点なので 0 はありえない位置
+'abc' indexOf: 'z'
+=> 0
+
+'abc' indexOf: 'abcd'
+=> 0
+
+"最初に見つかった位置を返す
+'abab' indexOf: 'ab'
+=> 1
+
+"空文字列は常に先頭で見つかる
+'abc' indexOf: ''
+=> 1
+
+"引数が文字列でなければ型の誤り
+'abc' indexOf: 1
+=> #TypeError
+
+"--- copyFrom:to: ---
+
+'abcde' copyFrom: 2 to: 4
+=> 'bcd'
+
+'abc' copyFrom: 1 to: 3
+=> 'abc'
+
+'abc' copyFrom: 2 to: 2
+=> 'b'
+
+"to が from - 1 のときだけ空文字列になる（Smalltalk-80）
+'abc' copyFrom: 2 to: 1
+=> ''
+
+'abc' copyFrom: 1 to: 0
+=> ''
+
+"それより小さいと範囲外
+'abc' copyFrom: 3 to: 1
+=> #SubscriptOutOfBounds
+
+"添字は 1 起点なので 0 は範囲外
+'abc' copyFrom: 0 to: 2
+=> #SubscriptOutOfBounds
+
+'abc' copyFrom: 1 to: 4
+=> #SubscriptOutOfBounds
+
+'abc' copyFrom: 4 to: 4
+=> #SubscriptOutOfBounds
+
+"空文字列からは何も取れない
+'' copyFrom: 1 to: 1
+=> #SubscriptOutOfBounds
+
+"空を取り出す形だけは通る
+'' copyFrom: 1 to: 0
+=> ''
+
+"添字が整数でなければ型の誤り。範囲外の判定より先（§6.0 の検査の順序）
+'abc' copyFrom: 1.5 to: 2
+=> #TypeError
+
+'abc' copyFrom: 1 to: 'x'
+=> #TypeError
+
+"型の誤りは範囲外より先に出る
+'abc' copyFrom: 'x' to: 99
+=> #TypeError
+
+"--- asNumber ---
+
+"受理するのは §2.1 の数値リテラルの形ちょうど
+'42' asNumber
+=> 42
+
+'-5' asNumber
+=> -5
+
+'3.14' asNumber
+=> 3.14
+
+'007' asNumber
+=> 7
+
+"指数も §2.1 の規則に従う。仮数が整数で指数が非負なら整数
+'1e3' asNumber
+=> 1000
+
+'1.5e3' asNumber
+=> 1500.0
+
+"大文字の E は §2.1 が拒むので読めない
+'1E3' asNumber
+=> nil
+
+"読めなければ nil。エラーではない
+'abc' asNumber
+=> nil
+
+'' asNumber
+=> nil
+
+"前後の空白があると形が一致しない
+' 42' asNumber
+=> nil
+
+'42 ' asNumber
+=> nil
+
+"途中から数でなくなるものも読めない
+'42abc' asNumber
+=> nil
+
+"§2.1 が小数として認めない形も読めない
+'5.' asNumber
+=> nil
+
+'.5' asNumber
+=> nil
+
+"--- 比較 ---
+
+'abc' = 'abc'
+=> true
+
+'abc' = 'abd'
+=> false
+
+'abc' ~= 'abd'
+=> true
+
+"大文字と小文字は区別する
+'abc' = 'ABC'
+=> false
+
+"長さが違えば等しくない
+'abc' = 'abcd'
+=> false
+
+"型が違ってもエラーにならない（§6.1 の = と同じ）
+'abc' = 1
+=> false
+
+'abc' = nil
+=> false
+
+"--- 空の判定 ---
+
+'' isEmpty
+=> true
+
+'abc' isEmpty
+=> false
+
+"ifEmpty: の受け手になれる（§5.2）
+'' ifEmpty: ['空']
+=> '空'
+
+'abc' ifEmpty: [1 / 0]
+=> 'abc'
+
+"--- 理解しないセレクタ ---
+
+'abc' + 1
+=> #DoesNotUnderstand
+
+'abc' abs
+=> #DoesNotUnderstand
