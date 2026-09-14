@@ -1,0 +1,60 @@
+name: AI code review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: レビュー対象の PR 番号
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  pull-requests: write
+
+# 同じ PR に連続でプッシュしたときは、最新のコミットに対するレビューだけを残す。
+concurrency:
+  group: ai-review-${{ github.event.pull_request.number || inputs.pr_number }}
+  cancel-in-progress: true
+
+jobs:
+  review:
+    # フォークからの PR にはシークレットが渡らないため対象外。
+    # ドラフトと no-ai-review ラベルの付いた PR もスキップする。
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (
+        github.event.pull_request.draft == false &&
+        github.event.pull_request.head.repo.full_name == github.repository &&
+        !contains(github.event.pull_request.labels.*.name, 'no-ai-review')
+      )
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: シークレットの確認
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+        run: |
+          if [ -z "$OPENAI_API_KEY" ]; then
+            echo "::error::シークレット OPENAI_API_KEY が未設定です。リポジトリの Settings → Secrets and variables → Actions で登録してください。"
+            exit 1
+          fi
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: レビューを実行
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number || inputs.pr_number }}
+          AI_REVIEW_MODEL: ${{ vars.AI_REVIEW_MODEL || 'gpt-5.6-terra' }}
+          AI_REVIEW_LANGUAGE: ${{ vars.AI_REVIEW_LANGUAGE || 'ja' }}
+          AI_REVIEW_REASONING_EFFORT: ${{ vars.AI_REVIEW_REASONING_EFFORT }}
+        run: node .github/scripts/ai-review.mjs
