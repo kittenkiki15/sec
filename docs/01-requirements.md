@@ -181,7 +181,7 @@ Excel の数式言語は関数の入れ子が深くなるほど読み書きが�
 | ID | 要件 | 優先 |
 | --- | --- | --- |
 | F-8-1 | エラーは値の一種として扱い、上流のエラーは下流へ伝播する | M |
-| F-8-2 | エラー種別: `#Syntax` `#DoesNotUnderstand` `#TypeError` `#DivideByZero` `#Circular` `#Ref`（無効参照） `#Timeout` `#Overflow`（数の範囲・定義域、ADR-0013 で追加） | M |
+| F-8-2 | エラー種別: `#Syntax` `#DoesNotUnderstand` `#TypeError` `#DivideByZero` `#Circular` `#Ref`（無効参照） `#Timeout` `#Overflow`（数の範囲・定義域、ADR-0013 で追加） `#SubscriptOutOfBounds`（添字の範囲外、ADR-0014 で追加） | M |
 | F-8-3 | 構文エラーは行・列位置と、人間にも AI にも読める説明文を持つ | M |
 | F-8-4 | エラーの捕捉（`on:do:` 相当、もしくは `ifError:`） | S |
 
