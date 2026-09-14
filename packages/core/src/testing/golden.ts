@@ -28,6 +28,12 @@
 export interface GoldenCase {
   /** 評価する式。複数行のことがある。 */
   readonly source: string;
+  /**
+   * 式を評価するときのシートの状態。セル参照から、そのセルに入っている内容への対応。
+   * 内容は原文テキストで、`=` で始まれば数式（要件 F-5-1）。
+   * 指定の無いセルは現れない。ケースごとに独立している。
+   */
+  readonly sheet: ReadonlyMap<string, string>;
   /** 期待される評価結果の表記。 */
   readonly expected: string;
   /** ファイル内での式の開始行（1 始まり）。失敗時の報告に使う。 */
@@ -46,7 +52,7 @@ export class GoldenParseError extends Error {
 }
 
 /** 式を評価し、期待値と比較できる表記に変換する関数。 */
-export type GoldenEvaluator = (source: string) => string;
+export type GoldenEvaluator = (source: string, sheet: ReadonlyMap<string, string>) => string;
 
 /** 期待どおりにならなかったケース。 */
 export interface GoldenFailure {
@@ -59,6 +65,10 @@ export interface GoldenFailure {
 
 const COMMENT_PREFIX = '"';
 const EXPECT_PREFIX = '=>';
+const DIRECTIVE_PREFIX = '!';
+
+/** ADR-0007 D-2 のセル参照の形。`!` は二項セレクタの文字ではないので、式と衝突しない。 */
+const CELL_REFERENCE = /^[A-Z]+[0-9]+$/;
 
 interface SourceLine {
   readonly text: string;
@@ -97,13 +107,77 @@ export function parseGoldenFile(text: string, fileName = '<golden>'): GoldenCase
   return blocks.map((block) => parseBlock(block, fileName));
 }
 
+/** `!A1 = 内容` の形のシートディレクティブを 1 行解析する。 */
+function parseDirective(line: SourceLine, fileName: string): { cell: string; content: string } {
+  const text = line.text.trimStart().slice(DIRECTIVE_PREFIX.length);
+  const separator = text.indexOf('=');
+  if (separator < 0) {
+    throw new GoldenParseError(
+      `${fileName}:${line.no}: セルの指定は "!A1 = 内容" の形で書いてください。`,
+      line.no,
+    );
+  }
+
+  const cell = text.slice(0, separator).trim();
+  if (!CELL_REFERENCE.test(cell)) {
+    throw new GoldenParseError(
+      `${fileName}:${line.no}: "${cell}" はセル参照の形ではありません。` +
+        `大文字の英字に続けて数字を書きます（例: A1）。`,
+      line.no,
+    );
+  }
+
+  // 最初の `=` だけを区切りとする。内容の側に数式（`=A1 + 1`）を書けるようにするため。
+  const content = text.slice(separator + 1).trim();
+  if (content === '') {
+    throw new GoldenParseError(
+      `${fileName}:${line.no}: セル ${cell} の内容が空です。` +
+        `空のセルを表したい場合はその行を書きません。`,
+      line.no,
+    );
+  }
+
+  return { cell, content };
+}
+
 function parseBlock(block: readonly SourceLine[], fileName: string): GoldenCase {
-  const first = block[0];
-  if (first === undefined) {
+  const head = block[0];
+  if (head === undefined) {
     throw new GoldenParseError(`${fileName}: 内部エラー: 空のケースを解析しようとしました。`, 0);
   }
 
-  const expectIndex = block.findIndex((line) => line.text.trimStart().startsWith(EXPECT_PREFIX));
+  const sheet = new Map<string, string>();
+  let bodyStart = 0;
+  for (; bodyStart < block.length; bodyStart += 1) {
+    const line = block[bodyStart];
+    if (line === undefined || !line.text.trimStart().startsWith(DIRECTIVE_PREFIX)) break;
+
+    const { cell, content } = parseDirective(line, fileName);
+    if (sheet.has(cell)) {
+      throw new GoldenParseError(
+        `${fileName}:${line.no}: セル ${cell} の指定が重複しています。`,
+        line.no,
+      );
+    }
+    sheet.set(cell, content);
+  }
+
+  const body = block.slice(bodyStart);
+  for (const line of body) {
+    if (line.text.trimStart().startsWith(DIRECTIVE_PREFIX)) {
+      throw new GoldenParseError(
+        `${fileName}:${line.no}: セルの指定は式より前に置いてください。`,
+        line.no,
+      );
+    }
+  }
+
+  const first = body[0];
+  if (first === undefined) {
+    throw new GoldenParseError(`${fileName}:${head.no}: セルの指定だけで式がありません。`, head.no);
+  }
+
+  const expectIndex = body.findIndex((line) => line.text.trimStart().startsWith(EXPECT_PREFIX));
   if (expectIndex < 0) {
     throw new GoldenParseError(
       `${fileName}:${first.no}: 期待値がありません。ケースには "=>" で始まる行が必要です。`,
@@ -111,26 +185,26 @@ function parseBlock(block: readonly SourceLine[], fileName: string): GoldenCase 
     );
   }
 
-  const expectLine = block[expectIndex];
+  const expectLine = body[expectIndex];
   if (expectIndex === 0 || expectLine === undefined) {
     throw new GoldenParseError(`${fileName}:${first.no}: "=>" の前に式がありません。`, first.no);
   }
 
-  const source = block
+  const source = body
     .slice(0, expectIndex)
     .map((line) => line.text)
     .join('\n')
     .trim();
 
-  const head = expectLine.text.trimStart().slice(EXPECT_PREFIX.length);
-  const rest = block.slice(expectIndex + 1).map((line) => line.text);
-  const expected = [head, ...rest].join('\n').trim();
+  const expectedHead = expectLine.text.trimStart().slice(EXPECT_PREFIX.length);
+  const rest = body.slice(expectIndex + 1).map((line) => line.text);
+  const expected = [expectedHead, ...rest].join('\n').trim();
 
   if (expected === '') {
     throw new GoldenParseError(`${fileName}:${expectLine.no}: 期待値が空です。`, expectLine.no);
   }
 
-  return { source, expected, line: first.no };
+  return { source, expected, line: first.no, sheet };
 }
 
 /**
@@ -146,7 +220,7 @@ export function runGoldenCases(
   for (const testCase of cases) {
     let actual: string;
     try {
-      actual = evaluate(testCase.source);
+      actual = evaluate(testCase.source, testCase.sheet);
     } catch (error) {
       failures.push({
         testCase,

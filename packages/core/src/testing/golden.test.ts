@@ -10,7 +10,7 @@ import {
 describe('parseGoldenFile', () => {
   it('1 行の式と期待値を読み取る', () => {
     const cases = parseGoldenFile('3 + 4 * 2\n=> 14\n');
-    expect(cases).toEqual([{ source: '3 + 4 * 2', expected: '14', line: 1 }]);
+    expect(cases).toEqual([{ source: '3 + 4 * 2', expected: '14', line: 1, sheet: new Map() }]);
   });
 
   it('空行で区切られた複数のケースを読み取る', () => {
@@ -28,7 +28,9 @@ describe('parseGoldenFile', () => {
 
   it('行頭が二重引用符の行をコメントとして読み飛ばす', () => {
     const text = ['"算術の優先順位', '3 + 4 * 2', '"ここもコメント', '=> 14'].join('\n');
-    expect(parseGoldenFile(text)).toEqual([{ source: '3 + 4 * 2', expected: '14', line: 2 }]);
+    expect(parseGoldenFile(text)).toEqual([
+      { source: '3 + 4 * 2', expected: '14', line: 2, sheet: new Map() },
+    ]);
   });
 
   it('複数行の式をそのまま保持する', () => {
@@ -46,6 +48,7 @@ describe('parseGoldenFile', () => {
       source: '3 + 4',
       expected: '7',
       line: 1,
+      sheet: new Map(),
     });
   });
 
@@ -85,11 +88,107 @@ describe('parseGoldenFile', () => {
   });
 });
 
+describe('parseGoldenFile のシートディレクティブ', () => {
+  it('ディレクティブが無ければシートは空', () => {
+    const [testCase] = parseGoldenFile('3 + 4\n=> 7\n');
+    expect(testCase?.sheet.size).toBe(0);
+  });
+
+  it('セルの内容を読み取る', () => {
+    const text = ['!A1 = 1', '!A2 = 2', 'A1 + A2', '=> 3'].join('\n');
+    const [testCase] = parseGoldenFile(text);
+
+    expect(testCase?.source).toBe('A1 + A2');
+    expect([...(testCase?.sheet ?? [])]).toEqual([
+      ['A1', '1'],
+      ['A2', '2'],
+    ]);
+  });
+
+  it('セルの内容に数式を置ける。最初の = だけが区切り', () => {
+    const [testCase] = parseGoldenFile(['!B1 = =A1 + 1', 'B1', '=> 2'].join('\n'));
+    expect(testCase?.sheet.get('B1')).toBe('=A1 + 1');
+  });
+
+  it('区切りの前後の空白は無視する', () => {
+    const [testCase] = parseGoldenFile(['!A1="abc"', 'A1', "=> 'abc'"].join('\n'));
+    expect(testCase?.sheet.get('A1')).toBe('"abc"');
+  });
+
+  it('ディレクティブはケースごとに独立している', () => {
+    const text = ['!A1 = 1', 'A1', '=> 1', '', 'A1', '=> nil'].join('\n');
+    const cases = parseGoldenFile(text);
+
+    expect(cases[0]?.sheet.size).toBe(1);
+    expect(cases[1]?.sheet.size).toBe(0);
+  });
+
+  it('式の開始行はディレクティブを飛ばした位置になる', () => {
+    const [testCase] = parseGoldenFile(['!A1 = 1', 'A1', '=> 1'].join('\n'));
+    expect(testCase?.line).toBe(2);
+  });
+
+  it('式より後に置かれたディレクティブを拒否する', () => {
+    expect(() => parseGoldenFile(['A1', '!A1 = 1', '=> 1'].join('\n'), 'a.txt')).toThrow(
+      /a\.txt:2: .*式より前/,
+    );
+  });
+
+  it('同じセルを 2 回指定したら拒否する', () => {
+    expect(() => parseGoldenFile(['!A1 = 1', '!A1 = 2', 'A1', '=> 1'].join('\n'), 'a.txt')).toThrow(
+      /a\.txt:2: .*A1.*重複/,
+    );
+  });
+
+  it('セル参照の形でない指定を拒否する', () => {
+    // ADR-0007 D-2 の形（大文字の英字 + 数字）だけを受け付ける。
+    for (const bad of ['a1', 'A', '1A', 'Abc123', 'A1:B2']) {
+      expect(() => parseGoldenFile([`!${bad} = 1`, 'A1', '=> 1'].join('\n'), 'a.txt')).toThrow(
+        /セル参照/,
+      );
+    }
+  });
+
+  it('区切りの = が無い指定を拒否する', () => {
+    expect(() => parseGoldenFile(['!A1 1', 'A1', '=> 1'].join('\n'), 'a.txt')).toThrow(/a\.txt:1/);
+  });
+
+  it('内容が空の指定を拒否する', () => {
+    // 空セルを表したいなら、その行を書かない。D-6 が決まるまで空の意味を固定しない。
+    expect(() => parseGoldenFile(['!A1 =', 'A1', '=> nil'].join('\n'), 'a.txt')).toThrow(
+      /a\.txt:1/,
+    );
+  });
+
+  it('ディレクティブだけで式が無いケースを拒否する', () => {
+    expect(() => parseGoldenFile(['!A1 = 1', '=> 1'].join('\n'), 'a.txt')).toThrow(
+      /式がありません/,
+    );
+  });
+});
+
+/** シートを使わないケースを組み立てる。 */
+const plainCase = (source: string, expected: string, line: number): GoldenCase => ({
+  source,
+  expected,
+  line,
+  sheet: new Map(),
+});
+
 describe('runGoldenCases', () => {
-  const cases: GoldenCase[] = [
-    { source: '3 + 4', expected: '7', line: 1 },
-    { source: '10 sqrt', expected: '3.16', line: 4 },
-  ];
+  const cases: GoldenCase[] = [plainCase('3 + 4', '7', 1), plainCase('10 sqrt', '3.16', 4)];
+
+  it('評価器にシートを渡す', () => {
+    const [testCase] = parseGoldenFile(['!A1 = 1', 'A1', '=> 1'].join('\n'));
+    let received: ReadonlyMap<string, string> | undefined;
+
+    runGoldenCases(testCase === undefined ? [] : [testCase], (_source, sheet) => {
+      received = sheet;
+      return '1';
+    });
+
+    expect(received?.get('A1')).toBe('1');
+  });
 
   it('全て一致すれば失敗を返さない', () => {
     const failures = runGoldenCases(cases, (source) => (source === '3 + 4' ? '7' : '3.16'));
@@ -129,7 +228,7 @@ describe('runGoldenCases', () => {
 
 describe('formatGoldenFailures', () => {
   it('ファイルと行を辿れる形にまとめる', () => {
-    const failures = runGoldenCases([{ source: '3 + 4', expected: '7', line: 12 }], () => '8');
+    const failures = runGoldenCases([plainCase('3 + 4', '7', 12)], () => '8');
     const message = formatGoldenFailures(failures, 'arithmetic.txt');
 
     expect(message).toContain('arithmetic.txt: 1 件のゴールデンテストが失敗しました。');
@@ -139,17 +238,14 @@ describe('formatGoldenFailures', () => {
   });
 
   it('例外で終わったケースは例外として表示する', () => {
-    const failures = runGoldenCases([{ source: 'x', expected: '1', line: 3 }], () => {
+    const failures = runGoldenCases([plainCase('x', '1', 3)], () => {
       throw new Error('未実装');
     });
     expect(formatGoldenFailures(failures, 'a.txt')).toContain('例外  : 未実装');
   });
 
   it('複数行の式を字下げして表示する', () => {
-    const failures = runGoldenCases(
-      [{ source: '| a |\n^ a', expected: 'nil', line: 1 }],
-      () => 'x',
-    );
+    const failures = runGoldenCases([plainCase('| a |\n^ a', 'nil', 1)], () => 'x');
     expect(formatGoldenFailures(failures, 'a.txt')).toContain('式    : | a |\n          ^ a');
   });
 });
