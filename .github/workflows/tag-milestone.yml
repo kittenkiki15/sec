@@ -25,6 +25,11 @@ on:
         description: 'タグを打つコミット SHA。空にすると main の先端'
         required: false
         type: string
+      allow_existing_tag:
+        description: '復旧用。タグはあるが Release が無い状態から Release だけを作り直す'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: write
@@ -51,20 +56,41 @@ jobs:
           TAG: ${{ inputs.tag }}
         run: node .github/scripts/validate-milestone-tag.mjs "$TAG"
 
+      - name: 現在の状態を調べる
+        id: state
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "tag_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "release_exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 分岐が 4 通りあり、shell に書くと取り違えやすいのでテスト付きのスクリプトに任せる。
+      - name: 何を作るか決める
+        id: decide
+        env:
+          TAG_EXISTS: ${{ steps.state.outputs.tag_exists }}
+          RELEASE_EXISTS: ${{ steps.state.outputs.release_exists }}
+          ALLOW_EXISTING_TAG: ${{ inputs.allow_existing_tag }}
+        run: echo "action=$(node .github/scripts/decide-tag-action.mjs)" >> "$GITHUB_OUTPUT"
+
       - name: タグを作成して push
+        if: steps.decide.outputs.action == 'create-tag-and-release'
         env:
           TAG: ${{ inputs.tag }}
           TITLE: ${{ inputs.title }}
           TARGET: ${{ inputs.target }}
         run: |
           set -euo pipefail
-
-          # タグは実質的に取り消せないので、上書きせず必ず失敗させる。
-          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-            echo "::error::タグ $TAG は既に存在します。別の名前を指定してください。"
-            exit 1
-          fi
-
           SHA="${TARGET:-$(git rev-parse HEAD)}"
           if ! git cat-file -e "${SHA}^{commit}" 2>/dev/null; then
             echo "::error::コミット $SHA が見つかりません。"
@@ -90,3 +116,4 @@ jobs:
           else
             gh release create "$TAG" --title "$TITLE" --generate-notes
           fi
+          echo "Release $TAG を作成しました。"
