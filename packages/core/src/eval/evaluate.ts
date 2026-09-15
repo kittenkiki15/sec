@@ -35,16 +35,24 @@ export class NotImplementedError extends Error {
  * @throws {NotImplementedError} まだ評価できないノードに当たった場合
  */
 export function evaluateFormula(source: string): Value {
-  let tree: Expression;
   try {
-    tree = parseFormula(source);
+    return evaluate(parseFormula(source));
   } catch (error) {
     if (error instanceof LexicalError || error instanceof ParseError) {
       return { kind: 'error', error: 'Syntax' };
     }
+    // 深い入れ子は構文解析器と評価器のどちらの再帰も尽きさせうる。**どちらで尽きても
+    // 仕様外の例外を漏らさない。** 超過した評価は `#Timeout`（§7.8）。
+    //
+    // **これは明示的な上限ではなく安全網である。** 本来はステップ数・時間・再帰深度を
+    // 予算として持つべきで（要件 N-5、CLAUDE.md 規約 4）、上限値は環境によって
+    // 妥当な値が違うため §7.8 が M4 送りにしている（#27）。
+    // それまでの間、呼び出し元が値だけを受け取れる状態を保つ。
+    if (error instanceof RangeError) {
+      return { kind: 'error', error: 'Timeout' };
+    }
     throw error;
   }
-  return evaluate(tree);
 }
 
 /** リテラル配列の要素は式ではなくリテラルなので（§2.4）、同じ経路で値にできる。 */
