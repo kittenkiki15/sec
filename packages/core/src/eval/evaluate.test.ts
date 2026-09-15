@@ -220,6 +220,96 @@ describe('evaluateFormula の数（§6.1）', () => {
   });
 });
 
+describe('evaluateFormula の商と剰余（§6.1）', () => {
+  it('// は床除算で、商は負の無限大の側へ丸める', () => {
+    expect(evaluated('7 // 2')).toBe('3');
+    expect(evaluated('-7 // 2')).toBe('-4');
+    expect(evaluated('7 // -2')).toBe('-4');
+  });
+
+  it('剰余の符号は除数に合わせる', () => {
+    expect(evaluated('7 \\ 2')).toBe('1');
+    expect(evaluated('-7 \\ 2')).toBe('1');
+    expect(evaluated('7 \\ -2')).toBe('-1');
+  });
+
+  it('整数を返すのは // だけで、\\ は小数を返しうる', () => {
+    expect(evaluated('7.5 // 2')).toBe('3');
+    expect(evaluated('7.5 \\ 2')).toBe('1.5');
+  });
+
+  it('除数が 0 なら #DivideByZero。変換より先に判定する', () => {
+    expect(evaluated('7 // 0')).toBe('#DivideByZero');
+    expect(evaluated('7 \\ 0')).toBe('#DivideByZero');
+    expect(evaluated('1e400 // 0.0')).toBe('#DivideByZero');
+    expect(evaluated('1e400 \\ 0.0')).toBe('#DivideByZero');
+  });
+
+  it('小数が混ざれば商を小数で求めるので、範囲の制限がかかる', () => {
+    expect(evaluated('1.0e308 // 1.0e-300')).toBe('#Overflow');
+    // 剰余は同じ商を経由するので、同じ条件で #Overflow になる。
+    expect(evaluated('1.0e308 \\ 1.0e-300')).toBe('#Overflow');
+  });
+
+  it('整数どうしなら整数演算のままなので、どれだけ大きくても通る', () => {
+    expect(evaluated('1e400 // 1e399')).toBe('10');
+    expect(evaluated('(1e400 * 1e400) // 1e800')).toBe('1');
+  });
+});
+
+describe('evaluateFormula の sqrt / rounded / truncated（§6.1）', () => {
+  it('sqrt は常に小数を返す', () => {
+    expect(evaluated('4 sqrt')).toBe('2.0');
+    expect(evaluated('0 sqrt')).toBe('0.0');
+    expect(evaluated('2 sqrt')).toBe('1.4142135623730951');
+  });
+
+  it('負の数の平方根は実数の範囲に無いので #Overflow（ADR-0013）', () => {
+    expect(evaluated('-1 sqrt')).toBe('#Overflow');
+  });
+
+  it('受け手の変換が演算より先に起きる', () => {
+    // 結果の 1e200 は表せるが、受け手を小数にできないので #Overflow。
+    expect(evaluated('1e400 sqrt')).toBe('#Overflow');
+  });
+
+  it('rounded は端数がちょうど半分なら大きい側へ', () => {
+    expect(evaluated('3.7 rounded')).toBe('4');
+    expect(evaluated('2.5 rounded')).toBe('3');
+    expect(evaluated('-2.5 rounded')).toBe('-2');
+    expect(evaluated('-3.7 rounded')).toBe('-4');
+  });
+
+  it('truncated は 0 の側へ落とす', () => {
+    expect(evaluated('3.7 truncated')).toBe('3');
+    expect(evaluated('-3.7 truncated')).toBe('-3');
+  });
+
+  it('どちらも常に整数を返す。整数に送っても整数のまま', () => {
+    expect(evaluated('3 rounded')).toBe('3');
+    expect(evaluated('3 truncated')).toBe('3');
+  });
+});
+
+describe('evaluateFormula の比較の残り（§6.1）', () => {
+  it('< と <= を送る', () => {
+    expect(evaluated('3 < 4')).toBe('true');
+    expect(evaluated('4 < 3')).toBe('false');
+    expect(evaluated('3 <= 3')).toBe('true');
+    expect(evaluated('1.0 < 1e400')).toBe('true');
+  });
+
+  it('~= は = の否定で、型が違ってもエラーにならない', () => {
+    expect(evaluated('3 ~= 4')).toBe('true');
+    expect(evaluated('3 ~= 3')).toBe('false');
+    expect(evaluated("1 ~= 'abc'")).toBe('true');
+  });
+
+  it('大小は型が揃っていないと決まらない', () => {
+    expect(evaluated("1 < 'abc'")).toBe('#TypeError');
+  });
+});
+
 describe('evaluateFormula のエラーの伝播順序（§6.0、ADR-0011）', () => {
   it('受け手を引数より先に評価する', () => {
     expect(evaluated('(3 foo) + (1 / 0)')).toBe('#DoesNotUnderstand');
