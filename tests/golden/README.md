@@ -105,7 +105,8 @@ A2 := A1 + 1.
 | §6.2 `String` | `strings.txt` |
 | §6.2 `Boolean` / `Symbol` / `nil` | `booleans.txt` |
 | §6.3 `Array` / `Range` / `Interval` / `Cell` | `collections.txt` |
-| §7 マクロ | `macros.txt` / `assignment.txt`（未作成） |
+| §7 マクロ（本体・ブロック・繰り返し） | `macros.txt` |
+| §7.2 / §7.3 代入とセルへの代入 | `assignment.txt` |
 
 ## 形式の検証
 
