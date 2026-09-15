@@ -5,14 +5,21 @@
  * **仕様書に無いものをフィクスチャが要求している**状態である。PR #11 の
  * レビューでは、この形の食い違いが繰り返し見つかった。
  *
- * セレクタの網羅までは見ない。キーワードメッセージは `detect:ifNone:` のように
- * 連結して 1 つのセレクタになるため、構文解析器なしに正しく切り出せず、
- * 誤検出の方が害になる。評価器ができたら M1 で入れ替える。
+ * **セレクタの網羅もここで見る。** 構文解析器ができるまでは、キーワードメッセージが
+ * `detect:ifNone:` のように連結して 1 つのセレクタになるため正しく切り出せず、
+ * 誤検出の方が害になるとして見送っていた（#21）。
  */
 import { readdirSync, readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
+import {
+  parseFormula,
+  parseMacroBody,
+  parseMacroDefinition,
+} from '../../packages/core/src/syntax/parser.ts';
+import { parseGoldenFile } from '../../packages/core/src/testing/index.ts';
+import { parseSelectorTables, sentSelectors } from './selectors.mjs';
 
 const goldenDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(goldenDir, '..', '..');
@@ -82,6 +89,82 @@ describe('ファイルの割り当て', () => {
     expect(
       listedNames().has(name),
       `tests/golden/${name} が README の割り当て表にありません。表を更新してください。`,
+    ).toBe(true);
+  });
+});
+
+describe('セレクタの網羅', () => {
+  /**
+   * ケースを開始記号どおりに解析して、セレクタを探す木を返す（ADR-0018、仕様書 §7.1）。
+   *
+   * シートに置いた数式も木にする。セルの内容は原文テキストで、`=` で始まれば数式である
+   * （要件 F-5-1）。**マクロを起動するメッセージ（`!macro from: 1 to: 3`）は木にしない。**
+   * 受け手を持たないため単独では解析できず、そこに現れるのはそのケースが定義した
+   * セレクタなので、組み込みセレクタの網羅には寄与しない。
+   */
+  const treesOf = (testCase) => {
+    const trees = [];
+    if (testCase.kind === 'formula') trees.push(parseFormula(testCase.source));
+    else if (testCase.send === null) trees.push(parseMacroBody(testCase.source));
+    else trees.push(parseMacroDefinition(testCase.source).body);
+
+    for (const content of testCase.sheet.values()) {
+      if (content.startsWith('=')) trees.push(parseFormula(content.slice(1)));
+    }
+    return trees;
+  };
+
+  /**
+   * フィクスチャ全体を解析して、送られているセレクタと、解析できなかったケースを返す。
+   *
+   * **解析できないケースを黙って飛ばさない。** `#Syntax` を期待するケースが落ちるのは
+   * 正しい振る舞いだが、それ以外が落ちるのは木を組めていないということで、
+   * そのケースのセレクタが数えられていない。網羅の穴と見分けが付かなくなる。
+   */
+  let analyzed = null;
+  const analyze = () => {
+    // 検査はセレクタごとに 1 件ずつ立てるので、毎回解析し直すとフィクスチャの数だけ効く。
+    if (analyzed !== null) return analyzed;
+
+    const used = new Map();
+    const unexpected = [];
+
+    for (const name of fixtureNames) {
+      const text = readFileSync(join(goldenDir, name), 'utf8');
+      for (const testCase of parseGoldenFile(text, `tests/golden/${name}`)) {
+        const where = `tests/golden/${name}:${testCase.line}`;
+        try {
+          for (const tree of treesOf(testCase)) {
+            for (const selector of sentSelectors(tree)) {
+              used.set(selector, [...(used.get(selector) ?? []), where]);
+            }
+          }
+        } catch (error) {
+          if (testCase.expected === '#Syntax') continue;
+          unexpected.push(`${where}（期待値 ${testCase.expected}）: ${error.message}`);
+        }
+      }
+    }
+    analyzed = { used, unexpected };
+    return analyzed;
+  };
+
+  it('仕様書がセレクタ表を持っている', () => {
+    // 表の読み方が変わって空集合になると、下の検証が 0 件になって素通りする。
+    expect(declared.size).toBeGreaterThan(0);
+  });
+
+  it('解析できないケースは #Syntax を期待している', () => {
+    expect(analyze().unexpected).toEqual([]);
+  });
+
+  const declared = parseSelectorTables(read('docs', '02-language-spec.md'));
+
+  it.each([...declared])('%s を送るケースがフィクスチャにある', (selector, heading) => {
+    expect(
+      analyze().used.has(selector),
+      `仕様書「${heading}」の ${selector} を送るケースが tests/golden にありません。` +
+        ` セレクタを追加・変更したら対応するゴールデンテストも足してください（CLAUDE.md）。`,
     ).toBe(true);
   });
 });
