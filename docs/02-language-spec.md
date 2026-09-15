@@ -1,7 +1,7 @@
 # 言語仕様書
 
 - プロジェクト: **sec**
-- 版: 0.3（ドラフト / §1〜5 と §6.0〜6.1）
+- 版: 0.4（ドラフト / §1〜5 と §6.0〜6.2）
 - 最終更新: 2026-09-14
 - 関連文書: [要件定義書](01-requirements.md) / [設計判断の記録](adr/) / [ゴールデンテスト](../tests/golden/)
 
@@ -24,7 +24,7 @@
 | §3 | メッセージ式と優先順位 | 本書で確定 |
 | §4 | セル参照と範囲 | 本書で確定 |
 | §5 | ブロックと条件 | 本書で確定 |
-| §6 | 組み込みクラスとセレクタ | **§6.0〜6.1 まで確定。** §6.2〜6.3 は執筆中（[#5](https://github.com/kittenkiki15/sec/issues/5)） |
+| §6 | 組み込みクラスとセレクタ | **§6.0〜6.2 まで確定。** §6.3 は執筆中（[#5](https://github.com/kittenkiki15/sec/issues/5)） |
 | §7 | マクロの文法 | 未着手（[#6](https://github.com/kittenkiki15/sec/issues/6)） |
 
 **§1〜§7 は言語の定義そのものに割り当てる。** 本書を書く過程で確定させた判断と、
@@ -46,6 +46,8 @@
 | §5.2 条件式 | [`tests/golden/conditionals.txt`](../tests/golden/conditionals.txt) |
 | §6.0 エラーの伝播順序 | [`tests/golden/errors.txt`](../tests/golden/errors.txt) |
 | §6.1 Number | [`tests/golden/numbers.txt`](../tests/golden/numbers.txt) |
+| §6.2 String | [`tests/golden/strings.txt`](../tests/golden/strings.txt) |
+| §6.2 Boolean / Symbol / nil | [`tests/golden/booleans.txt`](../tests/golden/booleans.txt) |
 
 評価器はまだ無いため、**これらのケースは 1 件も通らない。** それが M1 以降の作業リストになる。
 フィクスチャの形式が壊れていないことだけは `tests/golden/format.test.mjs` が検証している。
@@ -93,7 +95,8 @@
 エラーの表記に文言や位置を含めないのは、**文言の変更でゴールデンテストが落ちるのを避ける**ため。
 人間と AI に読める説明文は別に持つ（要件 F-8-3）。エラーの種別は要件 F-8-2 で定めた
 `#Syntax` `#DoesNotUnderstand` `#TypeError` `#DivideByZero` `#Circular` `#Ref` `#Timeout`
-`#Overflow` の 8 つ（最後の 1 つは [ADR-0013](adr/0013-non-finite-numbers.md) で追加）。
+`#Overflow` `#SubscriptOutOfBounds` の 9 つ（最後の 2 つは
+[ADR-0013](adr/0013-non-finite-numbers.md) と [ADR-0014](adr/0014-subscript-out-of-bounds.md) で追加）。
 
 数値の内部表現・精度・演算結果の型（整数と小数が混ざったときにどちらを返すか等）は
 **§6.1 で定めた**（[ADR-0012](adr/0012-number-model.md)）。本節が定めるのは表記だけである。
@@ -798,7 +801,7 @@ true ifTrue: [1] ifFalse: [2] ifTrue: [3]
 | `whileTrue:` | §7。数式では停止しない可能性があり、要件 N-5 の上限と併せて決める |
 | `ifError:` | 未決論点 D-8。エラーの捕捉構文を入れるかがまだ決まっていない |
 | マクロのブロック（文の列・一時変数） | §7 |
-| 空になりうるものが何か | §6。`ifEmpty:` の受け手になれる型の一覧 |
+| 空になりうるものが何か | §6.2 で `String`、§6.3 で `Array` と `Range` を定める |
 
 ---
 
@@ -816,7 +819,7 @@ true ifTrue: [1] ifFalse: [2] ifTrue: [3]
 | --- | --- | --- |
 | §6.0 | 共通の規則（エラーの区別・伝播順序・空セル） | 確定 |
 | §6.1 | `Number` | 確定 |
-| §6.2 | `String` / `Boolean` / `Symbol` / `nil` | 執筆中 |
+| §6.2 | `String` / `Boolean` / `Symbol` / `nil` | 確定 |
 | §6.3 | `Array` / `Range` / `Cell` | 執筆中 |
 | §6.4 | 本節で定めないもの | 確定 |
 
@@ -864,7 +867,7 @@ true ifTrue: [1] ifFalse: [2] ifTrue: [3]
 | --- | --- | --- |
 | 1 | 受け手がセレクタを持つか | `#DoesNotUnderstand` |
 | 2 | 引数の型が合うか | `#TypeError` |
-| 3 | 演算が定義されるか（除数が 0 でないか） | `#DivideByZero` |
+| 3 | 演算が定義されるか（除数が 0 でない／添字が範囲内） | `#DivideByZero` / `#SubscriptOutOfBounds` |
 | 4 | 結果を表せるか（§6.1 の変換と範囲） | `#Overflow` |
 
 **「その演算が成り立つか」を先に、「値を表せるか」を後に見る。**
@@ -1125,6 +1128,142 @@ Excel は両方 `1` を返すため、**ここは意図的な乖離である。*
 3 between: 5 and: 1   "→ false。正規化しない"
 ```
 
+### 6.2 String / Boolean / Symbol / nil
+
+対応するフィクスチャ: [`tests/golden/strings.txt`](../tests/golden/strings.txt)、
+[`tests/golden/booleans.txt`](../tests/golden/booleans.txt)
+
+#### String
+
+**添字は 1 起点**（Smalltalk-80 と Excel のどちらもそう）。したがって **`0` は常に範囲外**で、
+範囲外は `#SubscriptOutOfBounds` になる（[ADR-0014](adr/0014-subscript-out-of-bounds.md)）。
+
+**文字型は持たない。** 要件 F-2-7 の組み込みクラスに文字が無いため、`indexOf:` は
+**部分文字列**を取る。1 文字を取り出したい場合は `copyFrom:to:` を使う。
+
+**ソースは Unicode のテキストであり**（§1.1）、非 ASCII の文字列リテラルは保持・比較・
+連結できる。**未決なのは次の 2 点だけ**で、付録 B に送る。
+
+1. **`size` と添字が何を 1 と数えるか**（コードポイントか書記素クラスタか）
+2. **`asUppercase` / `asLowercase` が ASCII 外の文字をどう写すか**
+
+したがって**本項の表が定める挙動のうち、非 ASCII で結果が変わりうるのは `size`・添字・
+大文字小文字の変換だけ**である。連結や比較は「何を 1 文字と数えるか」に依存しない。
+`asUppercase` / `asLowercase` は**英字以外をそのまま返す**（`'a1!' asUppercase` → `'A1!'`）。
+
+| セレクタ | 引数 | 返り値 | エラーになる条件 |
+| --- | --- | --- | --- |
+| `,` | 文字列 | 文字列 | 引数が文字列でなければ `#TypeError` |
+| `size` | — | 整数 | — |
+| `isEmpty` | — | 真偽値 | — |
+| `asUppercase` `asLowercase` | — | 文字列 | — |
+| `indexOf:` | 文字列 | 整数（見つからなければ `0`） | 引数が文字列でなければ `#TypeError` |
+| `copyFrom:to:` | 整数、整数 | 文字列 | 整数でなければ `#TypeError`。範囲外なら `#SubscriptOutOfBounds` |
+| `asNumber` | — | 数、または `nil` | — |
+| `=` `~=` | 任意 | 真偽値 | **なし** |
+
+**`indexOf:` は見つからなければ `0` を返す**（Smalltalk-80）。添字が 1 起点なので、
+`0` は「ありえない位置」として機能する。空文字列は常に先頭で見つかる。
+
+```smalltalk
+'abcd' indexOf: 'bc'   "→ 2"
+'abc' indexOf: 'z'     "→ 0"
+'abc' indexOf: ''      "→ 1"
+```
+
+**`copyFrom:to:` は `to` が `from - 1` に等しいときだけ空文字列を返す**（Smalltalk-80）。
+それより小さければ範囲外である。
+
+```smalltalk
+'abcde' copyFrom: 2 to: 4   "→ 'bcd'"
+'abc' copyFrom: 2 to: 1     "→ ''。to が from - 1"
+'abc' copyFrom: 3 to: 1     "→ #SubscriptOutOfBounds"
+'abc' copyFrom: 0 to: 2     "→ #SubscriptOutOfBounds。1 起点"
+'abc' copyFrom: 1 to: 4     "→ #SubscriptOutOfBounds"
+```
+
+**`asNumber` が受理するのは §2.1 の数値リテラルの形ちょうど**であり、読めなければ `nil` を
+返す。エラーにはしない。**新しい規則を作らず §2.1 を再利用する**ことで、リテラルとして
+書ける形と文字列から読める形が常に一致する。
+
+```smalltalk
+'42' asNumber      "→ 42"
+'1e3' asNumber     "→ 1000。§2.1 の指数の規則に従う"
+'1E3' asNumber     "→ nil。§2.1 が大文字の E を拒む"
+' 42' asNumber     "→ nil。前後の空白があると形が一致しない"
+'5.' asNumber      "→ nil。§2.1 が小数として認めない"
+'abc' asNumber     "→ nil"
+```
+
+`nil` が返るため、既定値は `ifNil:` で与えられる（`'abc' asNumber ifNil: [0]`）。
+
+**空になりうるのは `String` である**（§5.2 の `ifEmpty:` の受け手。`Array` と `Range` は
+§6.3 で定める）。
+
+#### Boolean
+
+| セレクタ | 引数 | 返り値 | エラーになる条件 |
+| --- | --- | --- | --- |
+| `&` `\|` | 真偽値 | 真偽値 | 引数が真偽値でなければ `#TypeError` |
+| `and:` `or:` | ブロック | 真偽値 | 引数がブロックでなければ `#TypeError` |
+| `not` | — | 真偽値 | — |
+| `=` `~=` | 任意 | 真偽値 | **なし** |
+
+**`&` と `|` は先行評価、`and:` と `or:` は遅延評価**である。引数は送信の前に評価される
+（§3.6）ため、`&` の受け手が `false` でも引数のエラーは表に出る。
+
+```smalltalk
+false & (1 / 0)     "→ #DivideByZero。先行評価"
+false and: [1 / 0]  "→ false。選ばれないので評価されない"
+true or: [1 / 0]    "→ true"
+```
+
+**`and:` / `or:` の引数がブロックでなければ `#TypeError`** とするのは、§5.2 の条件式と
+同じ理由（値を渡せると先行評価になり、要件 F-2-9 を満たさない）による。
+
+条件式（`ifTrue:` `ifFalse:` など）は §5.2 で定めた。
+
+#### Symbol
+
+| セレクタ | 引数 | 返り値 | エラーになる条件 |
+| --- | --- | --- | --- |
+| `=` `~=` | 任意 | 真偽値 | **なし** |
+
+**シンボルと文字列は別のクラスであり、両向きとも等しくない。**
+
+```smalltalk
+#foo = #foo    "→ true"
+#foo = 'foo'   "→ false"
+'foo' = #foo   "→ false"
+```
+
+数の `1 = 1.0` が `true` なのは整数と小数が同じ「数」だからであり、**クラスをまたいだ
+同一視とは別の話**である。Smalltalk の実装には `#foo = 'foo'` と `'foo' = #foo` で
+結果が食い違うものがあるが、その非対称は持ち込まない。
+
+**シンボルは識別子であって文字の並びとして扱わない。** `size` や `asUppercase` は
+理解しない。必要になったら足す。
+
+#### nil
+
+| セレクタ | 引数 | 返り値 | エラーになる条件 |
+| --- | --- | --- | --- |
+| `isNil` `notNil` | — | 真偽値 | — |
+| `ifNil:` | ブロック | 引数を評価した値、または受け手 | 引数がブロックでなければ `#TypeError` |
+| `=` `~=` | 任意 | 真偽値 | **なし** |
+
+**`isNil` と `notNil` はすべての値が理解する。** `nil` かどうかを調べるために
+受け手を選ばずに済む必要があるためで、`ifNil:`（§5.2）と同じ理由による。
+
+```smalltalk
+nil isNil   "→ true"
+1 isNil     "→ false"
+```
+
+**`nil` は真偽値ではない**ので、`not` も `&` も理解しない。空セルの値は `nil` なので
+（[ADR-0010](adr/0010-empty-cell-value.md)）、**空セルを含む算術がエラーになるのは
+この帰結である**（§6.0）。
+
 ### 6.4 本節で定めないもの
 
 | 対象 | 扱い |
@@ -1164,6 +1303,12 @@ Excel は両方 `1` を返すため、**ここは意図的な乖離である。*
 | `min:` / `max:` の同値 | 引数を返す（`1 min: 1.0` は `1.0`） | `<` `>` による定義から導ける。但し書きを増やさない |
 | 負のゼロ | 値としては残し、表記は `0.0` | ゴールデンテストが符号の違いだけで落ちるのを避ける |
 | アンダーフロー | `0.0` に丸める。エラーにしない | 下側には丸め先があり、上側には無い。「精度が落ちる」側に当たる |
+| 文字型 | 持たない | F-2-7 の組み込みクラスに無い。`indexOf:` は部分文字列を取る |
+| `indexOf:` が見つからないとき | `0` | 添字が 1 起点なので「ありえない位置」として機能する（Smalltalk-80） |
+| `asNumber` が読めないとき | `nil`。エラーにしない | 既定値を `ifNil:` で与えられる。変換の失敗は誤りではない |
+| `asNumber` が受理する形 | §2.1 の数値リテラルちょうど | 新しい規則を作らない。リテラルと文字列で受理する形が常に一致する |
+| シンボルと文字列の比較 | 両向きとも `false` | 別のクラス。Smalltalk の実装にある非対称は持ち込まない |
+| シンボルの `size` | 理解しない | 識別子であって文字の並びとして扱わない。必要になったら足す |
 | 負の数の `sqrt` | `#Overflow` | 数の範囲・定義域の誤りとして 1 つの種別にまとめた（ADR-0013） |
 | `rounded` の半整数 | 大きい側へ（`2.5 rounded` は `3`） | Smalltalk-80 の `rounded` に合わせる |
 | `between:and:` の逆向き | `false`（正規化しない） | 範囲（§4.3）と違い、区間は向きに意味がある |
@@ -1177,6 +1322,12 @@ Excel は両方 `1` を返すため、**ここは意図的な乖離である。*
   同一性が必要になったら専用のセレクタを足す。数式で必要になる場面が無いため保留
 - **数の区間（`1 to: 10`）を作れるようにするか** — §6.3。
   §4.3 が定めたのはセル参照から範囲を作る記法だけ
+- **文字列と Unicode** — 決めるのは 2 つ。**(1)** `size` と添字が何を 1 と数えるか
+  （コードポイントか書記素クラスタか）、**(2)** `asUppercase` / `asLowercase` が
+  ASCII 外の文字をどう写すか。**非 ASCII のリテラルを扱えること自体は未決ではない。**
+  §1.1 がソースを Unicode のテキストと定めており、保持・比較・連結は上の 2 点に
+  依存しない（`tests/golden/strings.txt` の「非 ASCII」の節で固定してある）。
+  **UI（`packages/web`）が実際に扱う文字を見てから決める方が確実**なので、M0 では決めない
 - **極端な大きさの小数の表記** — 決めるのは 3 つ。**(1)** `1e-310` のように通常表記では
   極端に長くなる値に指数表記を使うか、**(2)** 使うなら仮数に小数点を付けるか
   （`1.0e-310` か `1e-310` か）、**(3)** 通常表記と指数表記の境界をどこに置くか。

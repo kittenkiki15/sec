@@ -71,8 +71,11 @@ B1
 | §3.5 優先順位 | `precedence.txt` |
 | §4 セル参照と範囲 | `references.txt` / `ranges.txt` |
 | §5 ブロックと条件 | `blocks.txt` / `conditionals.txt` |
-| §6 組み込みクラス | `numbers.txt` / `strings.txt`（未作成） / `collections.txt`（未作成） |
-| §6.0 エラーの伝播順序 | `errors.txt` |
+| §6.0 エラーの伝播順序と検査の順序 | `errors.txt` |
+| §6.1 `Number` | `numbers.txt` |
+| §6.2 `String` | `strings.txt` |
+| §6.2 `Boolean` / `Symbol` / `nil` | `booleans.txt` |
+| §6.3 `Array` / `Range` / `Cell` | `collections.txt`（未作成） |
 | §7 マクロ | `macros.txt` / `assignment.txt`（未作成） |
 
 ## 形式の検証
