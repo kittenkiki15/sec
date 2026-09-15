@@ -21,10 +21,11 @@
   （[#23](https://github.com/kittenkiki15/sec/issues/23)）**・段階 1（値の表記とリテラル）**
   （[#25](https://github.com/kittenkiki15/sec/issues/25)）**・段階 2（送信の骨格と
   エラーの伝播順序）**（[#28](https://github.com/kittenkiki15/sec/issues/28)）**・段階 3
-  （`Number` のセレクタ）**（[#30](https://github.com/kittenkiki15/sec/issues/30)）**が終わった。**
-  **仕様書 §6.1 を閉じ、5 ファイル 248 件が緑**（`literals` 61 / `messages` 26 /
-  `precedence` 16 / `errors` 20 / `numbers` 125）。**次は段階 4（`String` / `Boolean` /
-  `Symbol` / `nil`）**
+  （`Number` のセレクタ）**（[#30](https://github.com/kittenkiki15/sec/issues/30)）**・段階 4（`String` / `Boolean` /
+  `Symbol` / `nil`）**（[#32](https://github.com/kittenkiki15/sec/issues/32)）**が終わった。**
+  **仕様書 §6.1 と §6.2 を閉じ、7 ファイル 364 件が緑**（`literals` 61 / `messages` 26 /
+  `precedence` 16 / `errors` 20 / `numbers` 125 / `strings` 67 / `booleans` 49）。
+  **次は段階 5（ブロックと条件式）**
 
 ## M0 の記録
 
@@ -169,16 +170,17 @@ CLAUDE.md の「組み込みセレクタを追加・変更したら対応する�
 ### フィクスチャの分割（段階 0 で決めた）
 
 M2 の完了条件は「**セル参照なしの式**が評価できる」（要件定義書 §8）。
-セル参照は M3、マクロは M4 なので、**712 件のうち 165 件は M2 では緑にならない。**
+セル参照は M3、マクロは M4 なので、**713 件のうち 165 件は M2 では緑にならない。**
 
 | 区分 | 件数 |
 | --- | --- |
-| M2 で緑にする | 547 |
+| M2 で緑にする | 548 |
 | M3 待ち（`!pending m3`） | 105 |
 | M4 待ち（`!pending m4`） | 60 |
 
-段階 0 の時点では 546 / 106 だった。段階 2 で `errors.txt` の 1 件が**セル参照に
-到達しないまま緑になる**ことが分かり、M2 の側へ移った。
+段階 0 の時点では 546 / 106 で、総数は 712 件だった。段階 2 で `errors.txt` の 1 件が
+**セル参照に到達しないまま緑になる**ことが分かり、M2 の側へ移った。段階 4 で
+`strings.txt` に 1 件足した（`'1.0e400' asNumber`）。
 
 **保留は `!pending <マイルストーン>` の印でケースごとに表す**
 （[ADR-0019](adr/0019-golden-pending-directive.md)）。`collections.txt` が 109 / 46 で
@@ -193,8 +195,8 @@ M2 の完了条件は「**セル参照なしの式**が評価できる」（要�
 | 1 | 値の表現と表記（§0.3）、リテラルの評価 | `literals.txt` (45) | **済**（[#25](https://github.com/kittenkiki15/sec/issues/25)） |
 | 2 | 送信の骨格とエラーの伝播順序（§3.6 / §6.0） | `messages.txt` (26) / `precedence.txt` (16) / `errors.txt` (20) + `literals.txt` の残り 16 | **済**（[#28](https://github.com/kittenkiki15/sec/issues/28)） |
 | 3 | `Number` のセレクタ（§6.1） | `numbers.txt` (125) | **済**（[#30](https://github.com/kittenkiki15/sec/issues/30)） |
-| 4 | `String` / `Boolean` / `Symbol` / `nil`（§6.2） | `strings.txt` (66) / `booleans.txt` (49) | 次 |
-| 5 | ブロックと条件式（§5） | `blocks.txt` (23) / `conditionals.txt` (32) | |
+| 4 | `String` / `Boolean` / `Symbol` / `nil`（§6.2） | `strings.txt` (67) / `booleans.txt` (49) | **済**（[#32](https://github.com/kittenkiki15/sec/issues/32)） |
+| 5 | ブロックと条件式（§5） | `blocks.txt` (23) / `conditionals.txt` (32) | 次 |
 | 6 | `Array` / `Interval`（§6.3） | `collections.txt` (109) | |
 | 7 | CLI（`sec eval`） | — | |
 
@@ -257,14 +259,45 @@ M2 の完了条件は「**セル参照なしの式**が評価できる」（要�
 `numbers.txt` を対象に足した時点の失敗 38 件は**すべて未実装のセレクタ**で、
 期待値と食い違って落ちた。**未実装が緑として紛れ込んだケースは無い。**
 
+### 段階 4 で決めたこと
+
+**仕様書が書いていなかった 2 点を利用者に確認して決めた。** どちらも ADR は立てていない
+（新しい論点ではなく、既存の規則の適用範囲と、未決を残したままの暫定の実装）。
+
+- **`'1.0e400' asNumber` は `#Overflow`。** §2.1 の形には合うが倍精度に収まらない。
+  仕様が「新しい規則を作らず §2.1 を再利用する」としている以上、**再利用するのは形だけでなく
+  値の作り方も含む**（ADR-0013）。§6.0 は「表のエラー欄が空」を**引数の型では失敗しない**
+  意味と定めており、引数を取らない `asNumber` には当たらない。§6.2 と付録 A に書いた
+- **非 ASCII は暫定。** 付録 B の未決 2 点（数え方・写し方）は**開けたまま**、実装は
+  **コードポイントで数え**（字句解析器が列を数えるのと揃える）、**写像は実行環境の既定**に
+  した。付録 B にその旨を書き足してある。**決めるのは UI を見てから**（M5）
+
+**実装で決めたこと。**
+
+- **`asNumber` は字句解析器に読ませる。** 数値リテラルの形を判定する規則を書き写すと、
+  §2.1 を直したときに片方だけ古くなる。**綴りをトークンと突き合わせる**のは、前後の空白や
+  コメントがトークンにならず、`' 42'` が `42` として読めてしまうため
+- **等価性を受け手のクラスごとに書かず 1 箇所（`sendToAny`）に集めた。** `=` と `~=` は
+  §6.1〜6.3 のどのクラスも同じ形で持ち、**足し忘れた 1 つが `#DoesNotUnderstand` になる。**
+  `isNil` / `notNil` / `ifNil:` も受け手を選ばないので同じ場所に置いた。
+  **要素で比べる `Array` / `Interval` はここに含めない**（§6.3、段階 6 で足す）
+- **ブロックを引数に取るセレクタの型検査を `withBlock` に寄せた。** 短絡して引数を見ない
+  経路（`false and: 1`）でも型は検査する。検査を条件分岐の中に書くと、**選ばれない側の
+  検査が落ちても気付けない**（`booleans.txt` がこの 2 件を明示的に持っている）
+- **`and:` / `or:` は選んだ側のブロックの値をそのまま返す**（Smalltalk-80 と同じ）。
+  §6.2 の表は返り値を真偽値としているが、これは真偽値を返すブロックを渡す使い方を
+  書いたもので、`true and: [1]` のような形は定めていない。**必要になったら決める**
+
 ### ゴールデンテストの実行
 
 `tests/golden/evaluate.test.mjs` が実行する。**対象のファイルは段階ごとに増やす**
 （`COVERED` に足す）。全ファイルを一度に対象にすると赤が既定の状態になる（ADR-0019 の背景）。
 
 現在の対象は `literals.txt` (61) / `messages.txt` (26) / `precedence.txt` (16) /
-`errors.txt` (20) / `numbers.txt` (125) の **248 件**。
-`errors.txt` の残り 9 件はセル参照が要るので `!pending m3`。
+`errors.txt` (20) / `numbers.txt` (125) / `strings.txt` (67) / `booleans.txt` (49) の
+**364 件**。`errors.txt` の残り 9 件はセル参照が要るので `!pending m3`。
+**`strings.txt` と `booleans.txt` は保留のケースを 1 件も持たない**（どちらも全件が
+セル参照もマクロも使わない）。
 
 **印の外し忘れはハーネスが赤にして知らせる。** 段階 2 では `literals.txt` の `!pending m2`
 16 件に加えて、`errors.txt` の `(1 / 0) + A0` の印が実際にそれで見つかった
