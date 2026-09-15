@@ -10,6 +10,7 @@
  */
 
 import { isBareSymbolSpelling } from '../syntax/lexer.ts';
+import type { Body } from '../syntax/parser.ts';
 
 /** 要件 F-8-2 が定めるエラーの種別。**表記にはこの綴りだけを書く**（文言と位置は含めない）。 */
 export type ErrorKind =
@@ -60,6 +61,17 @@ export interface ArrayValue {
   readonly elements: readonly Value[];
 }
 
+/**
+ * ブロック（§5.1）。**評価を遅らせるための値**で、作るだけでは本体を評価しない。
+ * 本体を木のまま持つのは、`value` を送られて初めて評価するため。
+ */
+export interface BlockValue {
+  readonly kind: 'block';
+  /** 0〜2 個（要件 F-2-5）。数が合わない `value` の送信は `#TypeError`。 */
+  readonly parameters: readonly string[];
+  readonly body: Body;
+}
+
 export interface ErrorValue {
   readonly kind: 'error';
   readonly error: ErrorKind;
@@ -67,7 +79,7 @@ export interface ErrorValue {
 
 /**
  * 数式の評価結果（§6.0 の値の分類）。
- * `Range` / `Interval` / `Cell` は送信かセル参照が要るため、まだ無い。
+ * `Range` / `Interval` / `Cell` はセル参照が要るため、まだ無い。
  */
 export type Value =
   | IntegerValue
@@ -77,7 +89,18 @@ export type Value =
   | BooleanValue
   | NilValue
   | ArrayValue
+  | BlockValue
   | ErrorValue;
+
+/**
+ * 受け手と引数に現れうる値。**エラーはメッセージを受け取らない**（§6.0）。
+ * エラーになった時点で評価が打ち切られるので、送信まで届くことがない。
+ * 型で表しておくと、打ち切りを忘れた経路が型検査で落ちる。
+ */
+export type ReceivedValue = Exclude<Value, ErrorValue>;
+
+/** 整数と小数（§6.1）。**混ざる演算は小数を返す**（伝染）。 */
+export type NumberValue = IntegerValue | DecimalValue;
 
 /** 指数表記に切り替える境界（ADR-0017）。**この数値に理論的な必然性は無い。** */
 const EXPONENT_UPPER = 1e21;
@@ -132,6 +155,10 @@ export function printValue(value: Value): string {
     case 'array':
       // 入れ子の配列にも `#` が付く。要素の表記は種別に従うだけなので、そのまま辿る。
       return `#(${value.elements.map(printValue).join(' ')})`;
+    // 引数の数も本体も表記しない（§5.1）。原文をそのまま書くと、空白の入れ方を
+    // 変えただけでゴールデンテストが落ちる（エラーに文言を含めない理由と同じ）。
+    case 'block':
+      return 'aBlock';
     case 'error':
       return `#${value.error}`;
   }

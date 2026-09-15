@@ -92,21 +92,197 @@ describe('evaluateFormula のエラー', () => {
 describe('evaluateFormula のまだ評価できないもの', () => {
   // 保留のケース（!pending）はここで例外になる。黙って別の値を返すと、
   // ゴールデンテストが「たまたま期待値と一致した」ことを検出できなくなる。
-  it('メッセージ送信は例外にする', () => {
-    expect(() => evaluateFormula('3 + 4')).toThrow(/未実装/);
-    expect(() => evaluateFormula('-5 abs')).toThrow(/未実装/);
-  });
-
-  it('ブロックは例外にする', () => {
-    expect(() => evaluateFormula('[1]')).toThrow(/未実装/);
-  });
-
   it('セル参照は例外にする', () => {
     expect(() => evaluateFormula('A1')).toThrow(/未実装/);
   });
 
   it('裸の識別子は例外にする', () => {
     expect(() => evaluateFormula('foo')).toThrow(/未実装/);
+  });
+});
+
+describe('evaluateFormula のメッセージ送信', () => {
+  it('単項メッセージを左から右へ送る（§3.2）', () => {
+    expect(evaluated('5 abs')).toBe('5');
+    expect(evaluated('3 negated abs')).toBe('3');
+    expect(evaluated('2 squared squared')).toBe('16');
+  });
+
+  it('二項メッセージを送る（§3.3）', () => {
+    expect(evaluated('3 + 4')).toBe('7');
+    expect(evaluated('10 - 4')).toBe('6');
+    expect(evaluated('3 > 5')).toBe('false');
+    expect(evaluated('3 = 3')).toBe('true');
+  });
+
+  it('複数のキーワードは連結して 1 つのセレクタになる（§3.4）', () => {
+    expect(evaluated('3 between: 1 and: 5')).toBe('true');
+    // max:min: というセレクタは無い。1 回の送信なので #DoesNotUnderstand になる。
+    expect(evaluated('3 max: 4 min: 2')).toBe('#DoesNotUnderstand');
+    expect(evaluated('(3 max: 4) min: 2')).toBe('2');
+  });
+
+  it('受け手がセレクタを持たなければ #DoesNotUnderstand（§3.7）', () => {
+    expect(evaluated('3 foo')).toBe('#DoesNotUnderstand');
+    expect(evaluated('3 foo: 4')).toBe('#DoesNotUnderstand');
+    // 基数表記は本仕様に無いので、16 に rFF を送る式として読まれる（§2.1）。
+    expect(evaluated('16rFF')).toBe('#DoesNotUnderstand');
+  });
+});
+
+describe('evaluateFormula の優先順位（§3.5）', () => {
+  it('二項メッセージに優先順位は無く、左から右へ評価する', () => {
+    expect(evaluated('3 + 4 * 2')).toBe('14');
+    expect(evaluated('2 * 3 + 4')).toBe('10');
+    expect(evaluated('1 + 2 > 2')).toBe('true');
+  });
+
+  it('括弧は順位を無視して先に評価される', () => {
+    expect(evaluated('3 + (4 * 2)')).toBe('11');
+    expect(evaluated('(1 + 2) * (3 + 4)')).toBe('21');
+  });
+
+  it('単項は二項より、二項はキーワードより強い', () => {
+    expect(evaluated('2 * 3 squared')).toBe('18');
+    expect(evaluated('3 max: 1 + 4')).toBe('5');
+    expect(evaluated('2 max: 3 + 4 squared')).toBe('19');
+    expect(evaluated('1 + 2 * 3 squared')).toBe('27');
+  });
+});
+
+describe('evaluateFormula の数（§6.1）', () => {
+  it('整数どうしは任意精度のまま求める', () => {
+    expect(evaluated('9007199254740993 + 1')).toBe('9007199254740994');
+  });
+
+  it('整数と小数が混ざれば小数になる（伝染）', () => {
+    expect(evaluated('1 + 2.0')).toBe('3.0');
+    expect(evaluated('0.1 + 0.2')).toBe('0.30000000000000004');
+    // 変換できる範囲で桁が落ちるのはエラーではない。
+    expect(evaluated('9007199254740993 + 0.0')).toBe('9007199254740992.0');
+  });
+
+  it('/ が整数を返すのは両方が整数で割り切れるときだけ', () => {
+    expect(evaluated('6 / 3')).toBe('2');
+    expect(evaluated('7 / 2')).toBe('3.5');
+    expect(evaluated('6.0 / 3')).toBe('2.0');
+  });
+
+  it('除数が 0 なら変換より先に #DivideByZero（§6.0 の検査の順序）', () => {
+    expect(evaluated('1 / 0')).toBe('#DivideByZero');
+    expect(evaluated('1e400 / 0.0')).toBe('#DivideByZero');
+  });
+
+  it('小数として求める値が表せなければ #Overflow', () => {
+    expect(evaluated('1e400 / 3')).toBe('#Overflow');
+    expect(evaluated('1e400 + 0.0')).toBe('#Overflow');
+    expect(evaluated('1.0e308 * 10')).toBe('#Overflow');
+    // 整数のままなら範囲の制限は無い。
+    expect(evaluated('1e400 / 1e399')).toBe('10');
+  });
+
+  it('小さすぎて表せない値は 0.0 に丸める。#Overflow にはしない', () => {
+    expect(evaluated('1.0e-300 * 1.0e-100')).toBe('0.0');
+  });
+
+  it('比較は大きさを比べるだけなので #Overflow にならない', () => {
+    expect(evaluated('1e400 > 1.0')).toBe('true');
+    expect(evaluated('1.0 min: 1e400')).toBe('1.0');
+  });
+
+  it('整数と小数の比較は倍精度へ落とさずに行う', () => {
+    // 受け手を倍精度にすると 9007199254740992 に丸まり、偽になってしまう。
+    expect(evaluated('9007199254740993 > 9007199254740992.0')).toBe('true');
+    expect(evaluated('1 = 1.0')).toBe('true');
+  });
+
+  it('min: と max: は値が等しければ引数を返す', () => {
+    expect(evaluated('1 min: 1.0')).toBe('1.0');
+    expect(evaluated('1.0 max: 1')).toBe('1');
+    expect(evaluated('(1 min: 1.0) + 0')).toBe('1.0');
+  });
+
+  it('between:and: は境界を含み、逆向きの区間は常に false', () => {
+    expect(evaluated('1 between: 1 and: 5')).toBe('true');
+    expect(evaluated('3 between: 5 and: 1')).toBe('false');
+    expect(evaluated('7 between: 1 and: 5')).toBe('false');
+  });
+
+  it('= は型が違ってもエラーにならない。大小は型が揃っていないと決まらない', () => {
+    expect(evaluated("1 = 'abc'")).toBe('false');
+    expect(evaluated('1 = nil')).toBe('false');
+    expect(evaluated("1 > 'abc'")).toBe('#TypeError');
+  });
+
+  it('#DoesNotUnderstand は受け手、#TypeError は引数（§6.0）', () => {
+    expect(evaluated('nil + 1')).toBe('#DoesNotUnderstand');
+    expect(evaluated('1 + nil')).toBe('#TypeError');
+  });
+});
+
+describe('evaluateFormula のエラーの伝播順序（§6.0、ADR-0011）', () => {
+  it('受け手を引数より先に評価する', () => {
+    expect(evaluated('(3 foo) + (1 / 0)')).toBe('#DoesNotUnderstand');
+    expect(evaluated('(1 / 0) + (3 foo)')).toBe('#DivideByZero');
+  });
+
+  it('引数は左から右へ評価する', () => {
+    expect(evaluated('3 between: (1 / 0) and: (3 foo)')).toBe('#DivideByZero');
+    expect(evaluated('3 between: (3 foo) and: (1 / 0)')).toBe('#DoesNotUnderstand');
+  });
+
+  it('引数は送信より先に評価される', () => {
+    // セレクタを理解しないと分かるのは送信のときなので、引数のエラーの方が先に出る。
+    expect(evaluated('3 foo: (1 / 0)')).toBe('#DivideByZero');
+    expect(evaluated('3 foo: 1')).toBe('#DoesNotUnderstand');
+  });
+
+  it('二項は左から右なので、右端まで進まないことがある', () => {
+    expect(evaluated('1 + (3 foo) + (1 / 0)')).toBe('#DoesNotUnderstand');
+  });
+
+  it('エラーはメッセージを受け取らない', () => {
+    // エラーが「セレクタを理解しない値」に変わるわけではない。
+    expect(evaluated('(1 / 0) abs')).toBe('#DivideByZero');
+    expect(evaluated('(1 / 0) abs squared')).toBe('#DivideByZero');
+  });
+
+  it('構文エラーは実行時のエラーより先に出る', () => {
+    expect(evaluated('(1 / 0) +')).toBe('#Syntax');
+    expect(evaluated('(1 / 0) max:')).toBe('#Syntax');
+  });
+});
+
+describe('evaluateFormula のブロックと条件式（§5）', () => {
+  it('ブロックは作るだけでは本体を評価しない', () => {
+    expect(evaluated('[1 / 0]')).toBe('aBlock');
+  });
+
+  it('value を送って初めて本体を評価する', () => {
+    expect(evaluated('[3 + 4] value')).toBe('7');
+    expect(evaluated('[1 / 0] value')).toBe('#DivideByZero');
+  });
+
+  it('引数の数が合わなければ #TypeError（§5.1）', () => {
+    expect(evaluated('[:x | x] value')).toBe('#TypeError');
+  });
+
+  it('選ばれなかった側のブロックは評価されない（§5.2）', () => {
+    expect(evaluated('true ifTrue: [1] ifFalse: [1 / 0]')).toBe('1');
+    expect(evaluated('false ifTrue: [1 / 0] ifFalse: [2]')).toBe('2');
+  });
+
+  it('受け手がエラーなら、どちらのブロックも評価されない', () => {
+    expect(evaluated('(1 / 0) ifTrue: [1] ifFalse: [2]')).toBe('#DivideByZero');
+  });
+
+  it('条件式の引数はブロックでなければならない（要件 F-2-9）', () => {
+    expect(evaluated('true ifTrue: 1 ifFalse: [2]')).toBe('#TypeError');
+  });
+
+  it('受け手が真偽値でなければ #DoesNotUnderstand（§5.2）', () => {
+    expect(evaluated('3 ifTrue: [1] ifFalse: [2]')).toBe('#DoesNotUnderstand');
+    expect(evaluated('nil ifTrue: [1] ifFalse: [2]')).toBe('#DoesNotUnderstand');
   });
 });
 
