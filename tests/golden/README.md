@@ -75,11 +75,18 @@ B1
 | §6.1 `Number` | `numbers.txt` |
 | §6.2 `String` | `strings.txt` |
 | §6.2 `Boolean` / `Symbol` / `nil` | `booleans.txt` |
-| §6.3 `Array` / `Range` / `Cell` | `collections.txt`（未作成） |
+| §6.3 `Array` / `Range` / `Interval` / `Cell` | `collections.txt` |
 | §7 マクロ | `macros.txt` / `assignment.txt`（未作成） |
 
 ## 形式の検証
 
 `format.test.mjs` が、このディレクトリの `*.txt` をすべて `parseGoldenFile` で解析できることを
-検証します。**評価器が無い間、フィクスチャに対して走る唯一のテストです。**
+検証します。`consistency.test.mjs` は、**期待値に現れるエラー種別が要件 F-8-2 に定められて
+いること**と、**すべての `*.txt` が上の割り当て表に載っていること**を検証します。
+
+**評価器が無い間、フィクスチャに対して走るのはこの 2 つだけです。**
 期待値が合っているかは検証しません（評価器ができてから）。
+
+セレクタの網羅は検査していません。キーワードメッセージは `detect:ifNone:` のように連結して
+1 つのセレクタになるため、構文解析器なしには正しく切り出せず、誤検出の方が害になります。
+評価器ができたら M1 で入れ替えます。
