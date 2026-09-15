@@ -50,6 +50,14 @@ true and: false
 false or: true
 => #TypeError
 
+"短絡して引数を見ない経路でも型は検査する。上の 2 つは引数を選ぶ経路なので、
+"検査を省く実装でも通ってしまう
+false and: 1
+=> #TypeError
+
+true or: 1
+=> #TypeError
+
 "--- not ---
 
 true not
