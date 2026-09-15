@@ -395,3 +395,162 @@ describe('evaluateFormula の実行上限', () => {
     expect(evaluated(nested(100))).toBe(nested(100));
   });
 });
+
+describe('evaluateFormula の String（§6.2）', () => {
+  it('連結は文字列どうしだけ。受け手と引数で出るエラーが違う（§6.0）', () => {
+    expect(evaluated("'ab' , 'cd'")).toBe("'abcd'");
+    expect(evaluated("'ab' , 1")).toBe('#TypeError');
+    expect(evaluated("1 , 'ab'")).toBe('#DoesNotUnderstand');
+  });
+
+  it('size と isEmpty を送る', () => {
+    expect(evaluateFormula("'abc' size")).toEqual({ kind: 'integer', value: 3n });
+    expect(evaluated("'' isEmpty")).toBe('true');
+    expect(evaluated("'abc' isEmpty")).toBe('false');
+  });
+
+  it('大文字小文字の変換は英字以外をそのまま返す', () => {
+    expect(evaluated("'a1!' asUppercase")).toBe("'A1!'");
+    expect(evaluated("'A1!' asLowercase")).toBe("'a1!'");
+  });
+
+  it('indexOf: は部分文字列を取り、見つからなければ 0 を返す', () => {
+    expect(evaluated("'abcd' indexOf: 'bc'")).toBe('2');
+    expect(evaluated("'abc' indexOf: 'z'")).toBe('0');
+    // 空文字列は常に先頭で見つかる。1 起点なので 0 はありえない位置になる。
+    expect(evaluated("'abc' indexOf: ''")).toBe('1');
+    expect(evaluated("'abc' indexOf: 1")).toBe('#TypeError');
+  });
+
+  it('copyFrom:to: が空文字列を返すのは to が from - 1 のときだけ', () => {
+    expect(evaluated("'abcde' copyFrom: 2 to: 4")).toBe("'bcd'");
+    expect(evaluated("'abc' copyFrom: 2 to: 1")).toBe("''");
+    expect(evaluated("'abc' copyFrom: 3 to: 1")).toBe('#SubscriptOutOfBounds');
+  });
+
+  it('添字は 1 起点なので 0 は常に範囲外（ADR-0014）', () => {
+    expect(evaluated("'abc' copyFrom: 0 to: 2")).toBe('#SubscriptOutOfBounds');
+    expect(evaluated("'abc' copyFrom: 1 to: 4")).toBe('#SubscriptOutOfBounds');
+  });
+
+  it('添字の型の誤りは範囲外より先に出る（§6.0 の検査の順序）', () => {
+    expect(evaluated("'abc' copyFrom: 'x' to: 99")).toBe('#TypeError');
+    expect(evaluated("'abc' copyFrom: 1.5 to: 2")).toBe('#TypeError');
+  });
+
+  it('asNumber が受理するのは §2.1 の数値リテラルの形ちょうど', () => {
+    expect(evaluateFormula("'007' asNumber")).toEqual({ kind: 'integer', value: 7n });
+    expect(evaluated("'1e3' asNumber")).toBe('1000');
+    // 前後に空白やコメントが付けば形が一致しない。読めなければ nil でエラーではない。
+    expect(evaluated("' 42' asNumber")).toBe('nil');
+    expect(evaluated("'1E3' asNumber")).toBe('nil');
+    expect(evaluated("'5.' asNumber")).toBe('nil');
+  });
+
+  it('asNumber は字句エラーになる原文も nil にする', () => {
+    // 閉じていないコメントは #Syntax を投げる形だが、読めなかっただけとして nil を返す。
+    expect(evaluated("'\"abc' asNumber")).toBe('nil');
+  });
+
+  it('asNumber は倍精度に収まらない小数を #Overflow にする（#32）', () => {
+    // 形は §2.1 に合う。**値の生成（ADR-0013）まで §2.1 を再利用した帰結**で、
+    // リテラル 1.0e400 と同じ値になる。整数には桁数の上限が無いので 1e400 は通る。
+    expect(evaluated("'1.0e400' asNumber")).toBe('#Overflow');
+    expect(evaluated("'1e400' asNumber")).toBe(evaluated('1e400'));
+  });
+
+  it('非 ASCII はコードポイントで数える（暫定。付録 B は未決のまま）', () => {
+    // 数え方は付録 B が UI を見てから決めるとしている未決の論点で、ここで固定するのは
+    // **実装が何かを選ばざるを得ないための暫定**である。字句解析器が列をコードポイントで
+    // 数えるのに揃えた。サロゲートペアを 2 と数える実装との差はここにだけ出る。
+    expect(evaluated("'😀ab' size")).toBe('3');
+    expect(evaluated("'😀ab' copyFrom: 1 to: 1")).toBe("'😀'");
+    expect(evaluated("'😀ab' indexOf: 'a'")).toBe('2');
+  });
+
+  it('ifEmpty: は空のときだけ引数を評価する（§5.2）', () => {
+    expect(evaluated("'' ifEmpty: ['空']")).toBe("'空'");
+    expect(evaluated("'abc' ifEmpty: [1 / 0]")).toBe("'abc'");
+    expect(evaluated("'' ifEmpty: 1")).toBe('#TypeError');
+  });
+
+  it('= は型が違ってもエラーにならない', () => {
+    expect(evaluated("'abc' = 'abc'")).toBe('true');
+    expect(evaluated("'abc' = 'ABC'")).toBe('false');
+    expect(evaluated("'abc' = 1")).toBe('false');
+    expect(evaluated("'abc' ~= nil")).toBe('true');
+  });
+});
+
+describe('evaluateFormula の Boolean（§6.2）', () => {
+  it('& と | は先行評価なので、選ばれない側のエラーも表に出る', () => {
+    expect(evaluated('true & false')).toBe('false');
+    expect(evaluated('true | false')).toBe('true');
+    expect(evaluated('false & (1 / 0)')).toBe('#DivideByZero');
+    expect(evaluated('true | (1 / 0)')).toBe('#DivideByZero');
+  });
+
+  it('and: と or: は遅延評価なので、選ばれない側は評価されない', () => {
+    expect(evaluated('false and: [1 / 0]')).toBe('false');
+    expect(evaluated('true or: [1 / 0]')).toBe('true');
+    expect(evaluated('true and: [false]')).toBe('false');
+  });
+
+  it('短絡して引数を見ない経路でも型は検査する（§5.2 と同じ理由）', () => {
+    expect(evaluated('false and: 1')).toBe('#TypeError');
+    expect(evaluated('true or: 1')).toBe('#TypeError');
+  });
+
+  it('not を送る', () => {
+    expect(evaluated('true not')).toBe('false');
+    expect(evaluated('false not')).toBe('true');
+  });
+
+  it('引数が真偽値でなければ #TypeError、受け手が真偽値でなければ #DoesNotUnderstand', () => {
+    expect(evaluated('true & 1')).toBe('#TypeError');
+    expect(evaluated('1 & true')).toBe('#DoesNotUnderstand');
+    expect(evaluated('1 not')).toBe('#DoesNotUnderstand');
+  });
+});
+
+describe('evaluateFormula の Symbol と nil（§6.2）', () => {
+  it('シンボルと文字列は別のクラスで、両向きとも等しくない', () => {
+    expect(evaluated('#foo = #foo')).toBe('true');
+    expect(evaluated('#at:put: = #at:')).toBe('false');
+    expect(evaluated("#foo = 'foo'")).toBe('false');
+    expect(evaluated("'foo' = #foo")).toBe('false');
+  });
+
+  it('シンボルは識別子であって文字の並びとして扱わない', () => {
+    expect(evaluated('#foo size')).toBe('#DoesNotUnderstand');
+    expect(evaluated('#foo asUppercase')).toBe('#DoesNotUnderstand');
+  });
+
+  it('isNil と notNil はすべての値が理解する', () => {
+    expect(evaluated('nil isNil')).toBe('true');
+    expect(evaluated('nil notNil')).toBe('false');
+    expect(evaluated('1 isNil')).toBe('false');
+    expect(evaluated("'' isNil")).toBe('false');
+    expect(evaluated('#(1 2) isNil')).toBe('false');
+    expect(evaluated('[1 / 0] isNil')).toBe('false');
+  });
+
+  it('ifNil: もすべての値が理解し、引数はブロックでなければならない', () => {
+    expect(evaluated('nil ifNil: [0]')).toBe('0');
+    // 受け手が nil でなければ引数は評価されない（§5.2）。
+    expect(evaluated('1 ifNil: [1 / 0]')).toBe('1');
+    expect(evaluated('nil ifNil: 0')).toBe('#TypeError');
+    expect(evaluated('1 ifNil: 0')).toBe('#TypeError');
+  });
+
+  it('nil は真偽値ではないので論理演算を理解しない', () => {
+    expect(evaluated('nil not')).toBe('#DoesNotUnderstand');
+    expect(evaluated('nil size')).toBe('#DoesNotUnderstand');
+  });
+
+  it('nil の = は型が違ってもエラーにならない', () => {
+    expect(evaluated('nil = nil')).toBe('true');
+    expect(evaluated('nil = false')).toBe('false');
+    expect(evaluated('nil ~= nil')).toBe('false');
+  });
+});
