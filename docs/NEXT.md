@@ -9,7 +9,8 @@
 
 - **M0.5（リポジトリ基盤）完了。** タグ `m0.5` は `28e3a6d` を指す
 - **M0（言語仕様書の確定）完了。** 仕様書の **§1〜7 が確定**し、対応するフィクスチャが
-  `tests/golden/*.txt` に揃った。マイルストーンの完了条件（要件定義書 §8）を満たす
+  `tests/golden/*.txt` に揃った。マイルストーンの完了条件（要件定義書 §8）を満たす。
+  タグ `m0` は `2f2450a` を指す
 - **M1（字句解析・構文解析）に着手。字句解析器**（[#15](https://github.com/kittenkiki15/sec/issues/15)）
   **と構文解析器**（[#17](https://github.com/kittenkiki15/sec/issues/17)・
   [#19](https://github.com/kittenkiki15/sec/issues/19)）**ができた。**
