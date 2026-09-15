@@ -1,4 +1,10 @@
-export type { GoldenCase, GoldenEvaluator, GoldenFailure } from './golden.ts';
+export type {
+  GoldenCase,
+  GoldenEvaluator,
+  GoldenFailure,
+  GoldenInput,
+  GoldenKind,
+} from './golden.ts';
 export {
   formatGoldenFailures,
   GoldenParseError,

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   formatGoldenFailures,
   type GoldenCase,
+  type GoldenInput,
   GoldenParseError,
   parseGoldenFile,
   runGoldenCases,
@@ -10,7 +11,16 @@ import {
 describe('parseGoldenFile', () => {
   it('1 行の式と期待値を読み取る', () => {
     const cases = parseGoldenFile('3 + 4 * 2\n=> 14\n');
-    expect(cases).toEqual([{ source: '3 + 4 * 2', expected: '14', line: 1, sheet: new Map() }]);
+    expect(cases).toEqual([
+      {
+        source: '3 + 4 * 2',
+        kind: 'formula',
+        send: null,
+        expected: '14',
+        line: 1,
+        sheet: new Map(),
+      },
+    ]);
   });
 
   it('空行で区切られた複数のケースを読み取る', () => {
@@ -29,13 +39,20 @@ describe('parseGoldenFile', () => {
   it('行頭が二重引用符の行をコメントとして読み飛ばす', () => {
     const text = ['"算術の優先順位', '3 + 4 * 2', '"ここもコメント', '=> 14'].join('\n');
     expect(parseGoldenFile(text)).toEqual([
-      { source: '3 + 4 * 2', expected: '14', line: 2, sheet: new Map() },
+      {
+        source: '3 + 4 * 2',
+        kind: 'formula',
+        send: null,
+        expected: '14',
+        line: 2,
+        sheet: new Map(),
+      },
     ]);
   });
 
   it('複数行の式をそのまま保持する', () => {
-    const text = ['| a |', 'a := 3.', '^ a + 1', '=> 4'].join('\n');
-    expect(parseGoldenFile(text)[0]?.source).toBe('| a |\na := 3.\n^ a + 1');
+    const text = ['#(1 2 3)', '  inject: 0', '  into: [:a :b | a + b]', '=> 6'].join('\n');
+    expect(parseGoldenFile(text)[0]?.source).toBe('#(1 2 3)\n  inject: 0\n  into: [:a :b | a + b]');
   });
 
   it('複数行の期待値を連結する', () => {
@@ -46,6 +63,8 @@ describe('parseGoldenFile', () => {
   it('行末の空白を無視する', () => {
     expect(parseGoldenFile('3 + 4   \n=> 7   \n')[0]).toEqual({
       source: '3 + 4',
+      kind: 'formula',
+      send: null,
       expected: '7',
       line: 1,
       sheet: new Map(),
@@ -179,9 +198,130 @@ describe('parseGoldenFile のシートディレクティブ', () => {
   });
 });
 
+describe('parseGoldenFile の !macro ディレクティブ', () => {
+  it('ディレクティブが無ければ数式として読む', () => {
+    expect(parseGoldenFile('3 + 4\n=> 7')[0]?.kind).toBe('formula');
+  });
+
+  it('!macro があればマクロとして読む', () => {
+    const text = ['!macro', '| a |', 'a := 3.', '^ a + 1', '=> 4'].join('\n');
+    const [testCase] = parseGoldenFile(text);
+
+    expect(testCase?.kind).toBe('macro');
+    expect(testCase?.source).toBe('| a |\na := 3.\n^ a + 1');
+  });
+
+  it('同じ原文でも開始記号によって期待値が変わる', () => {
+    const formula = parseGoldenFile(['^ 3', '=> #Syntax'].join('\n'))[0];
+    const macro = parseGoldenFile(['!macro', '^ 3', '=> 3'].join('\n'))[0];
+
+    expect(formula?.kind).toBe('formula');
+    expect(macro?.kind).toBe('macro');
+    expect(macro?.source).toBe(formula?.source);
+  });
+
+  it('セルの指定と併せて書ける', () => {
+    const text = ['!macro', '!A1 := 1', 'A2 := A1 + 1.', '^ A2', '=> 2'].join('\n');
+    const [testCase] = parseGoldenFile(text);
+
+    expect(testCase?.kind).toBe('macro');
+    expect(testCase?.sheet.get('A1')).toBe('1');
+  });
+
+  it('式の開始行は !macro を飛ばした位置になる', () => {
+    const text = ['!macro', '!A1 := 1', '^ A1', '=> 1'].join('\n');
+    expect(parseGoldenFile(text)[0]?.line).toBe(3);
+  });
+
+  it('指定はケースごとに独立している', () => {
+    const text = ['!macro', '^ 1', '=> 1', '', '3 + 4', '=> 7'].join('\n');
+    expect(parseGoldenFile(text).map((c) => c.kind)).toEqual(['macro', 'formula']);
+  });
+
+  it('!macro がケースの最初の行に無ければ拒否する', () => {
+    expect(() =>
+      parseGoldenFile(['!A1 := 1', '!macro', '^ A1', '=> 1'].join('\n'), 'a.txt'),
+    ).toThrow(/最初の行/);
+  });
+
+  it('!macro が重複していたら拒否する', () => {
+    expect(() => parseGoldenFile(['!macro', '!macro', '^ 1', '=> 1'].join('\n'), 'a.txt')).toThrow(
+      /最初の行/,
+    );
+  });
+
+  it('式より後の !macro を拒否する', () => {
+    expect(() => parseGoldenFile(['^ 1', '!macro', '=> 1'].join('\n'), 'a.txt')).toThrow(
+      /式より前/,
+    );
+  });
+
+  it('!macro だけで式が無いケースを拒否する', () => {
+    expect(() => parseGoldenFile(['!macro', '=> 1'].join('\n'), 'a.txt')).toThrow(/式がありません/);
+  });
+
+  it('セル参照でもディレクティブ名でもない指定は、書き方を案内して拒否する', () => {
+    expect(() => parseGoldenFile(['!macros', '^ 1', '=> 1'].join('\n'), 'a.txt')).toThrow(/!macro/);
+  });
+});
+
+describe('parseGoldenFile の !macro に添えるメッセージ', () => {
+  it('メッセージが無ければ本体そのものを実行する', () => {
+    const [testCase] = parseGoldenFile(['!macro', '^ 1', '=> 1'].join('\n'));
+
+    expect(testCase?.kind).toBe('macro');
+    expect(testCase?.send).toBeNull();
+  });
+
+  it('数式のケースにも送信は無い', () => {
+    expect(parseGoldenFile('3 + 4\n=> 7')[0]?.send).toBeNull();
+  });
+
+  it('単項セレクタを添えるとマクロ定義として読む', () => {
+    const text = ['!macro monthlyTotal', 'monthlyTotal', '    ^ 3', '=> 3'].join('\n');
+    const [testCase] = parseGoldenFile(text);
+
+    expect(testCase?.kind).toBe('macro');
+    expect(testCase?.send).toBe('monthlyTotal');
+    expect(testCase?.source).toBe('monthlyTotal\n    ^ 3');
+  });
+
+  it('キーワードメッセージを添えられる', () => {
+    const text = ['!macro from: 1 to: 3', 'from: start to: end', '    ^ start + end', '=> 4'].join(
+      '\n',
+    );
+    expect(parseGoldenFile(text)[0]?.send).toBe('from: 1 to: 3');
+  });
+
+  it('送信の前後の空白は無視する', () => {
+    const text = ['!macro   monthlyTotal   ', 'monthlyTotal', '    ^ 3', '=> 3'].join('\n');
+    expect(parseGoldenFile(text)[0]?.send).toBe('monthlyTotal');
+  });
+
+  it('セルの指定と併せて書ける', () => {
+    const text = ['!macro summarize', '!A1 := 1', 'summarize', '    ^ A1', '=> 1'].join('\n');
+    const [testCase] = parseGoldenFile(text);
+
+    expect(testCase?.send).toBe('summarize');
+    expect(testCase?.sheet.get('A1')).toBe('1');
+  });
+
+  it('メッセージ付きの !macro も最初の行にだけ置ける', () => {
+    expect(() =>
+      parseGoldenFile(['!A1 := 1', '!macro monthlyTotal', '^ A1', '=> 1'].join('\n'), 'a.txt'),
+    ).toThrow(/最初の行/);
+  });
+
+  it('!macro で始まるだけの語はディレクティブにしない', () => {
+    expect(() => parseGoldenFile(['!macros', '^ 1', '=> 1'].join('\n'), 'a.txt')).toThrow(/!macro/);
+  });
+});
+
 /** シートを使わないケースを組み立てる。 */
 const plainCase = (source: string, expected: string, line: number): GoldenCase => ({
   source,
+  kind: 'formula',
+  send: null,
   expected,
   line,
   sheet: new Map(),
@@ -190,20 +330,37 @@ const plainCase = (source: string, expected: string, line: number): GoldenCase =
 describe('runGoldenCases', () => {
   const cases: GoldenCase[] = [plainCase('3 + 4', '7', 1), plainCase('10 sqrt', '3.16', 4)];
 
-  it('評価器にシートを渡す', () => {
-    const [testCase] = parseGoldenFile(['!A1 := 1', 'A1', '=> 1'].join('\n'));
-    let received: ReadonlyMap<string, string> | undefined;
+  it('評価器に原文・シート・開始記号・送信を渡す', () => {
+    const text = ['!macro monthlyTotal', '!A1 := 1', 'monthlyTotal', '    ^ A1', '=> 1'].join('\n');
+    const [testCase] = parseGoldenFile(text);
+    let received: GoldenInput | undefined;
 
-    runGoldenCases(testCase === undefined ? [] : [testCase], (_source, sheet) => {
-      received = sheet;
+    runGoldenCases(testCase === undefined ? [] : [testCase], (input) => {
+      received = input;
       return '1';
     });
 
-    expect(received?.get('A1')).toBe('1');
+    expect(received?.source).toBe('monthlyTotal\n    ^ A1');
+    expect(received?.sheet.get('A1')).toBe('1');
+    expect(received?.kind).toBe('macro');
+    expect(received?.send).toBe('monthlyTotal');
+  });
+
+  it('期待値と行番号は評価器に渡さない', () => {
+    const [testCase] = parseGoldenFile('3 + 4\n=> 7');
+    let received: GoldenInput | undefined;
+
+    runGoldenCases(testCase === undefined ? [] : [testCase], (input) => {
+      received = input;
+      return '7';
+    });
+
+    expect(received).not.toHaveProperty('expected');
+    expect(received).not.toHaveProperty('line');
   });
 
   it('全て一致すれば失敗を返さない', () => {
-    const failures = runGoldenCases(cases, (source) => (source === '3 + 4' ? '7' : '3.16'));
+    const failures = runGoldenCases(cases, ({ source }) => (source === '3 + 4' ? '7' : '3.16'));
     expect(failures).toEqual([]);
   });
 
@@ -218,7 +375,7 @@ describe('runGoldenCases', () => {
 
   it('例外を捕捉して残りのケースを続行する', () => {
     const evaluated: string[] = [];
-    const failures = runGoldenCases(cases, (source) => {
+    const failures = runGoldenCases(cases, ({ source }) => {
       evaluated.push(source);
       if (source === '3 + 4') throw new Error('未実装');
       return '3.16';
