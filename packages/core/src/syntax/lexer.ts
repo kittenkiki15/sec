@@ -76,6 +76,25 @@ const IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_]*$/;
 /** §1.4 のキーワードセレクタの形。`at:put:` のように 1 つ以上のキーワードが並ぶ。 */
 const KEYWORD_SELECTOR = /^(?:[A-Za-z_][A-Za-z0-9_]*:)+$/;
 
+/**
+ * `#` を外した綴りを、引用符なしのシンボルとして書けるか（§2.3）。
+ *
+ * **表記の側（`printValue`）が使う。** 何が識別子・セレクタの綴りかは字句の知識なので、
+ * 規則をここに置いたまま問う形にした。表記の側で正規表現を写すと、
+ * §1.2 / §1.4 を直したときに片方だけ古くなる。
+ *
+ * @param spelling `#` を外した綴り（`at:put:` / `hello world`）
+ */
+export function isBareSymbolSpelling(spelling: string): boolean {
+  if (IDENTIFIER.test(spelling) || KEYWORD_SELECTOR.test(spelling)) return true;
+  // 二項セレクタは §1.4 のとおり 1〜2 文字。
+  return (
+    spelling.length > 0 &&
+    spelling.length <= 2 &&
+    [...spelling].every((char) => BINARY_CHARACTERS.has(char))
+  );
+}
+
 /** §1.6 の 1 文字で決まる区切り記号。 */
 const PUNCTUATION: ReadonlyMap<string, TokenKind> = new Map<string, TokenKind>([
   ['(', 'leftParen'],
