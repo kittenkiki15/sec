@@ -201,6 +201,43 @@ A1..A3 collect: [:c | c * 2]
 A1..B2 collect: [:c | c value]
 => #(1 2 3 4)
 
+"at: も Cell を返す。単項はキーワードより強い（§3.5）ので、
+"at: の結果に value を送るには括弧が要る
+!A1 := 10
+!A2 := 20
+((A1..A2) at: 2) value
+=> 20
+
+!A1 := 10
+!A2 := 20
+((A1..A2) at: 1) value
+=> 10
+
+"last も Cell。単項どうしは左から右なので括弧は要らない
+!A1 := 10
+!A2 := 20
+A1..A2 last value
+=> 20
+
+"at: の添字も行優先で数える
+!A1 := 1
+!B1 := 2
+!A2 := 3
+!B2 := 4
+((A1..B2) at: 3) value
+=> 3
+
+"添字は 1 起点。範囲外は #SubscriptOutOfBounds
+(A1..A3) at: 0
+=> #SubscriptOutOfBounds
+
+(A1..A3) at: 4
+=> #SubscriptOutOfBounds
+
+"添字が整数でなければ型の誤り（§6.0 の検査の順序）
+(A1..A3) at: 'x'
+=> #TypeError
+
 "--- 範囲と空セル ---
 
 "集計は空セルを無視する（ADR-0010）
@@ -280,6 +317,33 @@ A1..A3 collect: [:c | c ifNil: [0]]
 
 (1 to: 5) select: [:x | x > 3]
 => #(4 5)
+
+"区間の at: は数を返す。範囲と違って Cell ではない
+(1 to: 5) at: 1
+=> 1
+
+(1 to: 5) at: 5
+=> 5
+
+"添字は 1 起点。値ではなく位置で数える
+(10 to: 14) at: 1
+=> 10
+
+(10 to: 14) at: 3
+=> 12
+
+(1 to: 5) at: 0
+=> #SubscriptOutOfBounds
+
+(1 to: 5) at: 6
+=> #SubscriptOutOfBounds
+
+(1 to: 5) at: 1.5
+=> #TypeError
+
+"区間の要素は数なので value を理解しない
+(1 to: 5) first value
+=> #DoesNotUnderstand
 
 "逆向きは空になる。範囲（§4.3）が正規化するのとは逆の扱い
 5 to: 1
