@@ -16,6 +16,7 @@ describe('parseGoldenFile', () => {
         source: '3 + 4 * 2',
         kind: 'formula',
         send: null,
+        pending: null,
         expected: '14',
         line: 1,
         sheet: new Map(),
@@ -43,6 +44,7 @@ describe('parseGoldenFile', () => {
         source: '3 + 4 * 2',
         kind: 'formula',
         send: null,
+        pending: null,
         expected: '14',
         line: 2,
         sheet: new Map(),
@@ -65,6 +67,7 @@ describe('parseGoldenFile', () => {
       source: '3 + 4',
       kind: 'formula',
       send: null,
+      pending: null,
       expected: '7',
       line: 1,
       sheet: new Map(),
@@ -322,6 +325,7 @@ const plainCase = (source: string, expected: string, line: number): GoldenCase =
   source,
   kind: 'formula',
   send: null,
+  pending: null,
   expected,
   line,
   sheet: new Map(),
@@ -416,5 +420,103 @@ describe('formatGoldenFailures', () => {
   it('複数行の式を字下げして表示する', () => {
     const failures = runGoldenCases([plainCase('| a |\n^ a', 'nil', 1)], () => 'x');
     expect(formatGoldenFailures(failures, 'a.txt')).toContain('式    : | a |\n          ^ a');
+  });
+});
+
+describe('parseGoldenFile の !pending ディレクティブ', () => {
+  it('ディレクティブが無ければ保留ではない', () => {
+    expect(parseGoldenFile('3 + 4\n=> 7')[0]?.pending).toBeNull();
+  });
+
+  it('保留にするマイルストーンを読み取る', () => {
+    const text = ['!pending m3', '!A1 := 1', 'A1 + 1', '=> 2'].join('\n');
+    const [testCase] = parseGoldenFile(text);
+
+    expect(testCase?.pending).toBe('m3');
+    expect(testCase?.source).toBe('A1 + 1');
+    expect(testCase?.sheet.get('A1')).toBe('1');
+  });
+
+  it('小数点を含むマイルストーン名も読み取る', () => {
+    expect(parseGoldenFile(['!pending m3.5', '3 + 4', '=> 7'].join('\n'))[0]?.pending).toBe('m3.5');
+  });
+
+  it('!macro の後ろに置ける', () => {
+    const text = ['!macro', '!pending m4', '^ 3', '=> 3'].join('\n');
+    const [testCase] = parseGoldenFile(text);
+
+    expect(testCase?.kind).toBe('macro');
+    expect(testCase?.pending).toBe('m4');
+  });
+
+  it('式の開始行は !pending を飛ばした位置になる', () => {
+    const text = ['!pending m3', '!A1 := 1', 'A1', '=> 1'].join('\n');
+    expect(parseGoldenFile(text)[0]?.line).toBe(3);
+  });
+
+  it('ケースごとに独立している', () => {
+    const text = ['!pending m3', 'A1', '=> nil', '', '3 + 4', '=> 7'].join('\n');
+    expect(parseGoldenFile(text).map((c) => c.pending)).toEqual(['m3', null]);
+  });
+
+  it('セルの指定より後ろに置かれたら拒否する', () => {
+    expect(() =>
+      parseGoldenFile(['!A1 := 1', '!pending m3', 'A1', '=> 1'].join('\n'), 'a.txt'),
+    ).toThrow(/!pending/);
+  });
+
+  it('重複していたら拒否する', () => {
+    expect(() =>
+      parseGoldenFile(['!pending m3', '!pending m4', '3', '=> 3'].join('\n'), 'a.txt'),
+    ).toThrow(/!pending/);
+  });
+
+  it('マイルストーン名が無ければ拒否する', () => {
+    expect(() => parseGoldenFile(['!pending', '3', '=> 3'].join('\n'), 'a.txt')).toThrow(
+      /マイルストーン/,
+    );
+  });
+
+  it('マイルストーン名の形でなければ拒否する', () => {
+    expect(() => parseGoldenFile(['!pending あとで', '3', '=> 3'].join('\n'), 'a.txt')).toThrow(
+      /マイルストーン/,
+    );
+  });
+
+  it('!pending だけで式が無いケースを拒否する', () => {
+    expect(() => parseGoldenFile(['!pending m3', '=> 1'].join('\n'), 'a.txt')).toThrow(
+      /式がありません/,
+    );
+  });
+});
+
+describe('runGoldenCases の保留のケース', () => {
+  const pendingCase = (source: string, expected: string): GoldenCase => ({
+    ...plainCase(source, expected, 1),
+    pending: 'm3',
+  });
+
+  it('期待値と一致しなくても失敗にしない', () => {
+    expect(runGoldenCases([pendingCase('A1', '1')], () => '#Ref')).toEqual([]);
+  });
+
+  it('例外で終わっても失敗にしない', () => {
+    const failures = runGoldenCases([pendingCase('A1', '1')], () => {
+      throw new Error('セル参照は未実装');
+    });
+    expect(failures).toEqual([]);
+  });
+
+  it('通ってしまったら、印が古いものとして失敗に含める', () => {
+    const failures = runGoldenCases([pendingCase('A1', '1')], () => '1');
+
+    expect(failures).toHaveLength(1);
+    expect(failures[0]?.testCase.pending).toBe('m3');
+    expect(failures[0]?.actual).toBe('1');
+  });
+
+  it('保留でないケースの判定は変わらない', () => {
+    const failures = runGoldenCases([plainCase('3 + 4', '7', 1)], () => '8');
+    expect(failures).toHaveLength(1);
   });
 });
