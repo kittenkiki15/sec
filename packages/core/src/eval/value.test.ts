@@ -163,3 +163,13 @@ describe('printValue のエラー', () => {
     expect(printValue(array({ kind: 'error', error: 'Ref' }))).toBe('#(#Ref)');
   });
 });
+
+describe('printValue のブロック', () => {
+  // §5.1: 引数の数も本体も表記しない。本体の原文をそのまま書くと、空白の入れ方を
+  // 変えただけでゴールデンテストが落ちる（エラーの表記に文言を含めない理由と同じ）。
+  it('引数の数によらず aBlock と書く', () => {
+    const body = { temporaries: [], statements: [{ kind: 'integer', value: 1n } as const] };
+    expect(printValue({ kind: 'block', parameters: [], body })).toBe('aBlock');
+    expect(printValue({ kind: 'block', parameters: ['x', 'y'], body })).toBe('aBlock');
+  });
+});

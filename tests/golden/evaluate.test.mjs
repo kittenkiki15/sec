@@ -23,7 +23,7 @@ import {
 const goldenDir = dirname(fileURLToPath(import.meta.url));
 
 /** 評価器が通せるようになったファイル。段階が進むたびにここへ足す。 */
-const COVERED = ['literals.txt'];
+const COVERED = ['literals.txt', 'messages.txt', 'precedence.txt', 'errors.txt'];
 
 /** ゴールデンテストの入力を評価器に渡す。マクロとシートはまだ無い。 */
 const evaluate = ({ source, sheet, kind }) => {
