@@ -107,6 +107,9 @@ const PRIMARY_END: ReadonlySet<TokenKind> = new Set<TokenKind>([
 const endsPrimary = (token: Token | undefined): boolean =>
   token !== undefined && PRIMARY_END.has(token.kind);
 
+/** UTF-16 の上位サロゲート。範囲外の `NaN` は比較が偽になるので、末尾でも安全に呼べる。 */
+const isHighSurrogate = (code: number): boolean => code >= 0xd800 && code <= 0xdbff;
+
 const isDigit = (char: string): boolean => char >= '0' && char <= '9';
 
 const isLetter = (char: string): boolean =>
@@ -145,6 +148,13 @@ export function tokenize(source: string): Token[] {
     return text;
   };
 
+  /**
+   * 1 文字（コードポイント 1 つ）進む。`index` は UTF-16 のコードユニットで数えるため、
+   * サロゲートペアは 2 つ進める。非 ASCII が現れるのは文字列とコメントの中だけで、
+   * **そこを 1 文字ずつ進めないと、同じ行の後続トークンの列がずれる。**
+   */
+  const advanceChar = (): string => advance(isHighSurrogate(source.charCodeAt(index)) ? 2 : 1);
+
   /** §1.5 のコメント。空白と同じ扱いなのでトークンにしない。 */
   const skipComment = (): void => {
     const startLine = line;
@@ -160,12 +170,14 @@ export function tokenize(source: string): Token[] {
           startColumn,
         );
       }
+      if (char !== '"') {
+        advanceChar();
+        continue;
+      }
       advance(1);
       // 中の " は二重にして書く。閉じ側と区別が付くのはここだけ。
-      if (char === '"') {
-        if (peek() !== '"') return;
-        advance(1);
-      }
+      if (peek() !== '"') return;
+      advance(1);
     }
   };
 
@@ -217,12 +229,14 @@ export function tokenize(source: string): Token[] {
           startColumn,
         );
       }
+      if (char !== "'") {
+        text += advanceChar();
+        continue;
+      }
       text += advance(1);
       // 中の ' は二重にして書く。
-      if (char === "'") {
-        if (peek() !== "'") return text;
-        text += advance(1);
-      }
+      if (peek() !== "'") return text;
+      text += advance(1);
     }
   };
 
@@ -339,8 +353,9 @@ export function tokenize(source: string): Token[] {
     } else {
       const punctuation = PUNCTUATION.get(char);
       if (punctuation === undefined) {
+        // サロゲートペアを半分だけ見せないよう、1 文字ぶんを取り出して知らせる。
         throw new LexicalError(
-          `"${char}" はこの言語で使えない文字です（§1.6）。`,
+          `"${advanceChar()}" はこの言語で使えない文字です（§1.6）。`,
           startLine,
           startColumn,
         );
