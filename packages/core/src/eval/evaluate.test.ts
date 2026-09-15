@@ -228,27 +228,27 @@ describe('evaluateFormula の商と剰余（§6.1）', () => {
   });
 
   it('剰余の符号は除数に合わせる', () => {
-    expect(evaluated('7 \\ 2')).toBe('1');
-    expect(evaluated('-7 \\ 2')).toBe('1');
-    expect(evaluated('7 \\ -2')).toBe('-1');
+    expect(evaluated('7 \\\\ 2')).toBe('1');
+    expect(evaluated('-7 \\\\ 2')).toBe('1');
+    expect(evaluated('7 \\\\ -2')).toBe('-1');
   });
 
-  it('整数を返すのは // だけで、\\ は小数を返しうる', () => {
+  it('整数を返すのは // だけで、\\\\ は小数を返しうる', () => {
     expect(evaluated('7.5 // 2')).toBe('3');
-    expect(evaluated('7.5 \\ 2')).toBe('1.5');
+    expect(evaluated('7.5 \\\\ 2')).toBe('1.5');
   });
 
   it('除数が 0 なら #DivideByZero。変換より先に判定する', () => {
     expect(evaluated('7 // 0')).toBe('#DivideByZero');
-    expect(evaluated('7 \\ 0')).toBe('#DivideByZero');
+    expect(evaluated('7 \\\\ 0')).toBe('#DivideByZero');
     expect(evaluated('1e400 // 0.0')).toBe('#DivideByZero');
-    expect(evaluated('1e400 \\ 0.0')).toBe('#DivideByZero');
+    expect(evaluated('1e400 \\\\ 0.0')).toBe('#DivideByZero');
   });
 
   it('小数が混ざれば商を小数で求めるので、範囲の制限がかかる', () => {
     expect(evaluated('1.0e308 // 1.0e-300')).toBe('#Overflow');
     // 剰余は同じ商を経由するので、同じ条件で #Overflow になる。
-    expect(evaluated('1.0e308 \\ 1.0e-300')).toBe('#Overflow');
+    expect(evaluated('1.0e308 \\\\ 1.0e-300')).toBe('#Overflow');
   });
 
   it('整数どうしなら整数演算のままなので、どれだけ大きくても通る', () => {

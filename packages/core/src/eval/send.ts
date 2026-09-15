@@ -13,8 +13,8 @@
  * これは**受け手と引数のどちらを先に評価するか**（§3.6 の伝播順序）とは別のもので、
  * そちらは `evaluate.ts` が引き受ける。
  *
- * **セレクタは段階ごとに足す。** 現時点で持たせてあるのは、対象にしているゴールデンテスト
- * （`messages` / `precedence` / `errors` / `literals`）が送るものだけである。
+ * **セレクタは段階ごとに足す。** 現時点で持たせてあるのは §6.1 の `Number` 全体と、
+ * `Boolean` の `ifTrue:ifFalse:`、`Block` の `value` だけである。
  * **持たせていないセレクタは `#DoesNotUnderstand` になる。** これは仕様上ありうる値なので、
  * 未実装であることの印にはならない。取り違えを防ぐのは、緑にしたファイルを
  * `evaluate.test.mjs` の対象へ足していく運用の側（ADR-0019）。
@@ -25,10 +25,15 @@ import {
   add,
   compareNumbers,
   divide,
+  floorDivide,
   isNumber,
+  modulo,
   multiply,
   negate,
+  round,
+  squareRoot,
   subtract,
+  truncate,
 } from './number.ts';
 import type {
   BlockValue,
@@ -49,6 +54,10 @@ const TYPE_ERROR: ErrorValue = { kind: 'error', error: 'TypeError' };
 const DOES_NOT_UNDERSTAND: ErrorValue = { kind: 'error', error: 'DoesNotUnderstand' };
 
 const boolean = (value: boolean): Value => ({ kind: 'boolean', value });
+
+/** 値として等しいか。**数でない引数とは、誤りではなく単に等しくない**（§6.1）。 */
+const isEqual = (receiver: NumberValue, argument: ReceivedValue): boolean =>
+  isNumber(argument) && compareNumbers(receiver, argument) === 0;
 
 /** 引数が数でなければ `#TypeError`（検査の順序 2）。 */
 const withNumber = (argument: ReceivedValue, operation: (argument: NumberValue) => Value): Value =>
@@ -76,6 +85,12 @@ function sendToNumber(
         return negate(receiver);
       case 'squared':
         return multiply(receiver, receiver);
+      case 'sqrt':
+        return squareRoot(receiver);
+      case 'rounded':
+        return round(receiver);
+      case 'truncated':
+        return truncate(receiver);
       default:
         return undefined;
     }
@@ -83,9 +98,11 @@ function sendToNumber(
 
   if (second === undefined) {
     switch (selector) {
-      // = は型が違ってもエラーにならない。等しくないだけである（§6.1）。
+      // = と ~= は型が違ってもエラーにならない。等しくないだけである（§6.1）。
       case '=':
-        return boolean(isNumber(first) && compareNumbers(receiver, first) === 0);
+        return boolean(isEqual(receiver, first));
+      case '~=':
+        return boolean(!isEqual(receiver, first));
       case '+':
         return withNumber(first, (argument) => add(receiver, argument));
       case '-':
@@ -94,6 +111,15 @@ function sendToNumber(
         return withNumber(first, (argument) => multiply(receiver, argument));
       case '/':
         return withNumber(first, (argument) => divide(receiver, argument));
+      case '//':
+        return withNumber(first, (argument) => floorDivide(receiver, argument));
+      case '\\\\':
+        return withNumber(first, (argument) => modulo(receiver, argument));
+      // 大小は型が揃っていないと決まらないので、引数が数でなければ #TypeError（§6.1）。
+      case '<':
+        return withNumber(first, (argument) => boolean(compareNumbers(receiver, argument) === -1));
+      case '<=':
+        return withNumber(first, (argument) => boolean(compareNumbers(receiver, argument) <= 0));
       case '>':
         return withNumber(first, (argument) => boolean(compareNumbers(receiver, argument) === 1));
       case '>=':
