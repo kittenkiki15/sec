@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   formatGoldenFailures,
   type GoldenCase,
+  type GoldenInput,
   GoldenParseError,
   parseGoldenFile,
   runGoldenCases,
@@ -11,7 +12,14 @@ describe('parseGoldenFile', () => {
   it('1 行の式と期待値を読み取る', () => {
     const cases = parseGoldenFile('3 + 4 * 2\n=> 14\n');
     expect(cases).toEqual([
-      { source: '3 + 4 * 2', kind: 'formula', expected: '14', line: 1, sheet: new Map() },
+      {
+        source: '3 + 4 * 2',
+        kind: 'formula',
+        send: null,
+        expected: '14',
+        line: 1,
+        sheet: new Map(),
+      },
     ]);
   });
 
@@ -31,7 +39,14 @@ describe('parseGoldenFile', () => {
   it('行頭が二重引用符の行をコメントとして読み飛ばす', () => {
     const text = ['"算術の優先順位', '3 + 4 * 2', '"ここもコメント', '=> 14'].join('\n');
     expect(parseGoldenFile(text)).toEqual([
-      { source: '3 + 4 * 2', kind: 'formula', expected: '14', line: 2, sheet: new Map() },
+      {
+        source: '3 + 4 * 2',
+        kind: 'formula',
+        send: null,
+        expected: '14',
+        line: 2,
+        sheet: new Map(),
+      },
     ]);
   });
 
@@ -49,6 +64,7 @@ describe('parseGoldenFile', () => {
     expect(parseGoldenFile('3 + 4   \n=> 7   \n')[0]).toEqual({
       source: '3 + 4',
       kind: 'formula',
+      send: null,
       expected: '7',
       line: 1,
       sheet: new Map(),
@@ -249,10 +265,63 @@ describe('parseGoldenFile の !macro ディレクティブ', () => {
   });
 });
 
+describe('parseGoldenFile の !macro に添えるメッセージ', () => {
+  it('メッセージが無ければ本体そのものを実行する', () => {
+    const [testCase] = parseGoldenFile(['!macro', '^ 1', '=> 1'].join('\n'));
+
+    expect(testCase?.kind).toBe('macro');
+    expect(testCase?.send).toBeNull();
+  });
+
+  it('数式のケースにも送信は無い', () => {
+    expect(parseGoldenFile('3 + 4\n=> 7')[0]?.send).toBeNull();
+  });
+
+  it('単項セレクタを添えるとマクロ定義として読む', () => {
+    const text = ['!macro monthlyTotal', 'monthlyTotal', '    ^ 3', '=> 3'].join('\n');
+    const [testCase] = parseGoldenFile(text);
+
+    expect(testCase?.kind).toBe('macro');
+    expect(testCase?.send).toBe('monthlyTotal');
+    expect(testCase?.source).toBe('monthlyTotal\n    ^ 3');
+  });
+
+  it('キーワードメッセージを添えられる', () => {
+    const text = ['!macro from: 1 to: 3', 'from: start to: end', '    ^ start + end', '=> 4'].join(
+      '\n',
+    );
+    expect(parseGoldenFile(text)[0]?.send).toBe('from: 1 to: 3');
+  });
+
+  it('送信の前後の空白は無視する', () => {
+    const text = ['!macro   monthlyTotal   ', 'monthlyTotal', '    ^ 3', '=> 3'].join('\n');
+    expect(parseGoldenFile(text)[0]?.send).toBe('monthlyTotal');
+  });
+
+  it('セルの指定と併せて書ける', () => {
+    const text = ['!macro summarize', '!A1 := 1', 'summarize', '    ^ A1', '=> 1'].join('\n');
+    const [testCase] = parseGoldenFile(text);
+
+    expect(testCase?.send).toBe('summarize');
+    expect(testCase?.sheet.get('A1')).toBe('1');
+  });
+
+  it('メッセージ付きの !macro も最初の行にだけ置ける', () => {
+    expect(() =>
+      parseGoldenFile(['!A1 := 1', '!macro monthlyTotal', '^ A1', '=> 1'].join('\n'), 'a.txt'),
+    ).toThrow(/最初の行/);
+  });
+
+  it('!macro で始まるだけの語はディレクティブにしない', () => {
+    expect(() => parseGoldenFile(['!macros', '^ 1', '=> 1'].join('\n'), 'a.txt')).toThrow(/!macro/);
+  });
+});
+
 /** シートを使わないケースを組み立てる。 */
 const plainCase = (source: string, expected: string, line: number): GoldenCase => ({
   source,
   kind: 'formula',
+  send: null,
   expected,
   line,
   sheet: new Map(),
@@ -261,32 +330,37 @@ const plainCase = (source: string, expected: string, line: number): GoldenCase =
 describe('runGoldenCases', () => {
   const cases: GoldenCase[] = [plainCase('3 + 4', '7', 1), plainCase('10 sqrt', '3.16', 4)];
 
-  it('評価器にシートを渡す', () => {
-    const [testCase] = parseGoldenFile(['!A1 := 1', 'A1', '=> 1'].join('\n'));
-    let received: ReadonlyMap<string, string> | undefined;
+  it('評価器に原文・シート・開始記号・送信を渡す', () => {
+    const text = ['!macro monthlyTotal', '!A1 := 1', 'monthlyTotal', '    ^ A1', '=> 1'].join('\n');
+    const [testCase] = parseGoldenFile(text);
+    let received: GoldenInput | undefined;
 
-    runGoldenCases(testCase === undefined ? [] : [testCase], (_source, sheet) => {
-      received = sheet;
+    runGoldenCases(testCase === undefined ? [] : [testCase], (input) => {
+      received = input;
       return '1';
     });
 
-    expect(received?.get('A1')).toBe('1');
+    expect(received?.source).toBe('monthlyTotal\n    ^ A1');
+    expect(received?.sheet.get('A1')).toBe('1');
+    expect(received?.kind).toBe('macro');
+    expect(received?.send).toBe('monthlyTotal');
   });
 
-  it('評価器に開始記号を渡す', () => {
-    const [testCase] = parseGoldenFile(['!macro', '^ 1', '=> 1'].join('\n'));
-    let received: string | undefined;
+  it('期待値と行番号は評価器に渡さない', () => {
+    const [testCase] = parseGoldenFile('3 + 4\n=> 7');
+    let received: GoldenInput | undefined;
 
-    runGoldenCases(testCase === undefined ? [] : [testCase], (_source, _sheet, kind) => {
-      received = kind;
-      return '1';
+    runGoldenCases(testCase === undefined ? [] : [testCase], (input) => {
+      received = input;
+      return '7';
     });
 
-    expect(received).toBe('macro');
+    expect(received).not.toHaveProperty('expected');
+    expect(received).not.toHaveProperty('line');
   });
 
   it('全て一致すれば失敗を返さない', () => {
-    const failures = runGoldenCases(cases, (source) => (source === '3 + 4' ? '7' : '3.16'));
+    const failures = runGoldenCases(cases, ({ source }) => (source === '3 + 4' ? '7' : '3.16'));
     expect(failures).toEqual([]);
   });
 
@@ -301,7 +375,7 @@ describe('runGoldenCases', () => {
 
   it('例外を捕捉して残りのケースを続行する', () => {
     const evaluated: string[] = [];
-    const failures = runGoldenCases(cases, (source) => {
+    const failures = runGoldenCases(cases, ({ source }) => {
       evaluated.push(source);
       if (source === '3 + 4') throw new Error('未実装');
       return '3.16';
