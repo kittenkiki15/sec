@@ -228,7 +228,11 @@ const integerValue = (text: string): bigint => {
   return exponent === undefined ? digits : digits * 10n ** BigInt(exponent);
 };
 
-const numberNode = (token: Token): IntegerNode | DecimalNode | ErrorNode => {
+/**
+ * 数値リテラルの綴りを木に載せる（§2.1）。**倍精度に収まらない小数は `#Overflow`**
+ * （ADR-0013）。`String` の `asNumber`（§6.2）も**同じ規則で読む**ため公開してある。
+ */
+export const numberNode = (token: Token): IntegerNode | DecimalNode | ErrorNode => {
   if (token.kind === 'integer') return { kind: 'integer', value: integerValue(token.text) };
 
   const value = Number(token.text);
