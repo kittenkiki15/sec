@@ -13,10 +13,10 @@
  * => 14
  *
  * "式も期待値も複数行に書ける
- * | a |
- * a := 3.
- * ^ a + 1
- * => 4
+ * #(1 2 3)
+ *   inject: 0
+ *   into: [:a :b | a + b]
+ * => 6
  * ```
  *
  * - 空行がケースの区切り。
@@ -32,12 +32,31 @@
  * B1
  * => 2
  * ```
+ *
+ * 原文をマクロとして読ませたい場合は、ケースの最初の行に `!macro` を置く（ADR-0018）。
+ * 数式とマクロは開始記号が違い、同じ原文でも結果が変わる（仕様書 §7）。
+ *
+ * ```text
+ * !macro
+ * | a |
+ * a := 3.
+ * ^ a + 1
+ * => 4
+ * ```
  */
+
+/**
+ * ケースの原文をどの開始記号で読むか（仕様書 §7）。
+ * 数式は式ちょうど 1 つ、マクロは一時変数と文の列を持てる。
+ */
+export type GoldenKind = 'formula' | 'macro';
 
 /** ゴールデンテストの 1 ケース。 */
 export interface GoldenCase {
   /** 評価する式。複数行のことがある。 */
   readonly source: string;
+  /** 原文をどう読むか。`!macro` ディレクティブの無いケースは数式（ADR-0018）。 */
+  readonly kind: GoldenKind;
   /**
    * 式を評価するときのシートの状態。セル参照から、そのセルに入っている内容への対応。
    * 内容は原文テキストで、`=` で始まれば数式（要件 F-5-1）。
@@ -62,7 +81,11 @@ export class GoldenParseError extends Error {
 }
 
 /** 式を評価し、期待値と比較できる表記に変換する関数。 */
-export type GoldenEvaluator = (source: string, sheet: ReadonlyMap<string, string>) => string;
+export type GoldenEvaluator = (
+  source: string,
+  sheet: ReadonlyMap<string, string>,
+  kind: GoldenKind,
+) => string;
 
 /** 期待どおりにならなかったケース。 */
 export interface GoldenFailure {
@@ -79,6 +102,9 @@ const DIRECTIVE_PREFIX = '!';
 
 /** セルへの代入の記法に合わせる（ADR-0007 D-3 の `B14 := total`）。 */
 const DIRECTIVE_SEPARATOR = ':=';
+
+/** 原文をマクロとして読ませるディレクティブ（ADR-0018）。 */
+const MACRO_DIRECTIVE = '!macro';
 
 /** ADR-0007 D-2 のセル参照の形。`!` は二項セレクタの文字ではないので、式と衝突しない。 */
 const CELL_REFERENCE = /^[A-Z]+[0-9]+$/;
@@ -126,7 +152,8 @@ function parseDirective(line: SourceLine, fileName: string): { cell: string; con
   const separator = text.indexOf(DIRECTIVE_SEPARATOR);
   if (separator < 0) {
     throw new GoldenParseError(
-      `${fileName}:${line.no}: セルの指定は "!A1 := 内容" の形で書いてください。` +
+      `${fileName}:${line.no}: セルの指定は "!A1 := 内容"、` +
+        `マクロの指定は "${MACRO_DIRECTIVE}" の形で書いてください。` +
         `セルへの代入は ":=" と書きます（ADR-0007 D-3）。`,
       line.no,
     );
@@ -163,9 +190,21 @@ function parseBlock(block: readonly SourceLine[], fileName: string): GoldenCase 
 
   const sheet = new Map<string, string>();
   let bodyStart = 0;
+
+  // ケースの最初の行にだけ置ける。位置を 1 箇所に固定して、同じことの書き方を増やさない。
+  const kind: GoldenKind = head.text.trim() === MACRO_DIRECTIVE ? 'macro' : 'formula';
+  if (kind === 'macro') bodyStart = 1;
+
   for (; bodyStart < block.length; bodyStart += 1) {
     const line = block[bodyStart];
     if (line === undefined || !line.text.trimStart().startsWith(DIRECTIVE_PREFIX)) break;
+
+    if (line.text.trim() === MACRO_DIRECTIVE) {
+      throw new GoldenParseError(
+        `${fileName}:${line.no}: "${MACRO_DIRECTIVE}" はケースの最初の行に書いてください。`,
+        line.no,
+      );
+    }
 
     const { cell, content } = parseDirective(line, fileName);
     if (sheet.has(cell)) {
@@ -181,7 +220,7 @@ function parseBlock(block: readonly SourceLine[], fileName: string): GoldenCase 
   for (const line of body) {
     if (line.text.trimStart().startsWith(DIRECTIVE_PREFIX)) {
       throw new GoldenParseError(
-        `${fileName}:${line.no}: セルの指定は式より前に置いてください。`,
+        `${fileName}:${line.no}: ディレクティブ（! で始まる行）は式より前に置いてください。`,
         line.no,
       );
     }
@@ -189,7 +228,10 @@ function parseBlock(block: readonly SourceLine[], fileName: string): GoldenCase 
 
   const first = body[0];
   if (first === undefined) {
-    throw new GoldenParseError(`${fileName}:${head.no}: セルの指定だけで式がありません。`, head.no);
+    throw new GoldenParseError(
+      `${fileName}:${head.no}: ディレクティブだけで式がありません。`,
+      head.no,
+    );
   }
 
   const expectIndex = body.findIndex((line) => line.text.trimStart().startsWith(EXPECT_PREFIX));
@@ -219,7 +261,7 @@ function parseBlock(block: readonly SourceLine[], fileName: string): GoldenCase 
     throw new GoldenParseError(`${fileName}:${expectLine.no}: 期待値が空です。`, expectLine.no);
   }
 
-  return { source, expected, line: first.no, sheet };
+  return { source, kind, expected, line: first.no, sheet };
 }
 
 /**
@@ -235,7 +277,7 @@ export function runGoldenCases(
   for (const testCase of cases) {
     let actual: string;
     try {
-      actual = evaluate(testCase.source, testCase.sheet);
+      actual = evaluate(testCase.source, testCase.sheet, testCase.kind);
     } catch (error) {
       failures.push({
         testCase,
