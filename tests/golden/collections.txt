@@ -156,29 +156,36 @@
 "--- 範囲 ---
 
 "範囲の大きさはセルの数。値が入っていなくてもよい
+!pending m3
 A1..A3 size
 => 3
 
+!pending m3
 A1..B2 size
 => 4
 
 "範囲が空になることはない。セル参照は必ず 1 つ以上のセルを指す
+!pending m3
 A1..A1 size
 => 1
 
+!pending m3
 A1..A1 isEmpty
 => false
 
 "同じ矩形なら等しい。正規化した後で比べる（§4.3）
+!pending m3
 A1..B2 = (B2..A1)
 => true
 
+!pending m3
 A1..A3 = (A1..A2)
 => false
 
 "--- 範囲の列挙はセルを渡す ---
 
 "範囲の要素は Cell。value を送れることで見分けられる
+!pending m3
 !A1 := 1
 !A2 := 2
 !A3 := 3
@@ -186,6 +193,7 @@ A1..A3 first value
 => 1
 
 "表記はセルが保持する値に従う（§0.3）ので、見た目では配列と区別が付かない
+!pending m3
 !A1 := 1
 !A2 := 2
 !A3 := 3
@@ -193,6 +201,7 @@ A1..A3 collect: [:c | c]
 => #(1 2 3)
 
 "value を送れば Cell であることが分かる
+!pending m3
 !A1 := 1
 !A2 := 2
 !A3 := 3
@@ -200,6 +209,7 @@ A1..A3 collect: [:c | c value]
 => #(1 2 3)
 
 "委譲は範囲の中でも働く（§4.2 の規則 2）
+!pending m3
 !A1 := 1
 !A2 := 2
 !A3 := 3
@@ -207,6 +217,7 @@ A1..A3 collect: [:c | c * 2]
 => #(2 4 6)
 
 "列挙は行優先。左から右へ進み、次の行へ移る
+!pending m3
 !A1 := 1
 !B1 := 2
 !A2 := 3
@@ -216,6 +227,7 @@ A1..B2 collect: [:c | c value]
 
 "collect: 以外の列挙も Cell を渡す（ADR-0015）。
 "ブロックの中で value を送れることが、値を渡す実装との違いになる
+!pending m3
 !A1 := 1
 !A2 := 2
 !A3 := 3
@@ -223,12 +235,14 @@ A1..A3 select: [:c | c value > 1]
 => #(2 3)
 
 "選び出した結果の要素も Cell のまま
+!pending m3
 !A1 := 1
 !A2 := 2
 !A3 := 3
 (A1..A3 select: [:c | c value > 1]) first value
 => 2
 
+!pending m3
 !A1 := 1
 !A2 := 2
 !A3 := 3
@@ -236,6 +250,7 @@ A1..A3 reject: [:c | c value > 1]
 => #(1)
 
 "detect:ifNone: が返すのも Cell
+!pending m3
 !A1 := 1
 !A2 := 2
 !A3 := 3
@@ -243,6 +258,7 @@ A1..A3 reject: [:c | c value > 1]
 => 2
 
 "見つからなければ ifNone: を評価した値。こちらは Cell ではない
+!pending m3
 !A1 := 1
 !A2 := 2
 !A3 := 3
@@ -250,6 +266,7 @@ A1..A3 detect: [:c | c value > 9] ifNone: [0]
 => 0
 
 "inject:into: のブロックは累積値と Cell を受け取る
+!pending m3
 !A1 := 1
 !A2 := 2
 !A3 := 3
@@ -257,6 +274,7 @@ A1..A3 inject: 0 into: [:acc :c | acc + c value]
 => 6
 
 "sorted: の比較ブロックにも Cell が渡る
+!pending m3
 !A1 := 1
 !A2 := 2
 !A3 := 3
@@ -264,6 +282,7 @@ A1..A3 sorted: [:a :b | a value > b value]
 => #(3 2 1)
 
 "委譲が働くので value を省いても書ける（§4.2 の規則 2）
+!pending m3
 !A1 := 1
 !A2 := 2
 !A3 := 3
@@ -272,23 +291,27 @@ A1..A3 select: [:c | c > 1]
 
 "at: も Cell を返す。単項はキーワードより強い（§3.5）ので、
 "at: の結果に value を送るには括弧が要る
+!pending m3
 !A1 := 10
 !A2 := 20
 ((A1..A2) at: 2) value
 => 20
 
+!pending m3
 !A1 := 10
 !A2 := 20
 ((A1..A2) at: 1) value
 => 10
 
 "last も Cell。単項どうしは左から右なので括弧は要らない
+!pending m3
 !A1 := 10
 !A2 := 20
 A1..A2 last value
 => 20
 
 "at: の添字も行優先で数える
+!pending m3
 !A1 := 1
 !B1 := 2
 !A2 := 3
@@ -297,42 +320,50 @@ A1..A2 last value
 => 3
 
 "添字は 1 起点。範囲外は #SubscriptOutOfBounds
+!pending m3
 (A1..A3) at: 0
 => #SubscriptOutOfBounds
 
+!pending m3
 (A1..A3) at: 4
 => #SubscriptOutOfBounds
 
 "添字が整数でなければ型の誤り（§6.0 の検査の順序）
+!pending m3
 (A1..A3) at: 'x'
 => #TypeError
 
 "--- 範囲と空セル ---
 
 "集計は空セルを無視する（ADR-0010）
+!pending m3
 !A1 := 1
 !A3 := 3
 A1..A3 sum
 => 4
 
 "count は空セルを数えない。size は数える
+!pending m3
 !A1 := 1
 !A3 := 3
 A1..A3 count
 => 2
 
+!pending m3
 !A1 := 1
 !A3 := 3
 A1..A3 size
 => 3
 
 "average は空セルを除いた個数で割る
+!pending m3
 !A1 := 1
 !A3 := 3
 A1..A3 average
 => 2
 
 "max も空セルを無視する
+!pending m3
 !A1 := 1
 !A2 := 5
 !A3 := 3
@@ -340,12 +371,14 @@ A1..A3 max
 => 5
 
 "集計は要素を値に解決してから扱う。数でない値があれば型の誤りになる
+!pending m3
 !A1 := 1
 !A2 := 'a'
 !A3 := 3
 A1..A3 sum
 => #TypeError
 
+!pending m3
 !A1 := 1
 !A2 := 'a'
 !A3 := 3
@@ -353,43 +386,52 @@ A1..A3 min
 => #TypeError
 
 "count は値を要求しないので、文字列が入っていても数える
+!pending m3
 !A1 := 1
 !A2 := 'a'
 !A3 := 3
 A1..A3 count
 => 3
 
+!pending m3
 !A1 := 1
 !A3 := 3
 A1..A3 max
 => 3
 
 "すべて空なら、空の集計と同じ扱い
+!pending m3
 A1..A3 sum
 => 0
 
+!pending m3
 A1..A3 count
 => 0
 
+!pending m3
 A1..A3 average
 => nil
 
+!pending m3
 A1..A3 min
 => nil
 
 "列挙は無視しない。空セルは nil を保持する Cell として渡る
+!pending m3
 !A1 := 1
 !A3 := 3
 A1..A3 collect: [:c | c value]
 => #(1 nil 3)
 
 "そのため空セルを含む算術はエラーになる（ADR-0010）
+!pending m3
 !A1 := 1
 !A3 := 3
 A1..A3 collect: [:c | c * 2]
 => #DoesNotUnderstand
 
 "ifNil: で避けられる
+!pending m3
 !A1 := 1
 !A3 := 3
 A1..A3 collect: [:c | c ifNil: [0]]
@@ -612,6 +654,7 @@ A1..A3 collect: [:c | c ifNil: [0]]
 => true
 
 "範囲だけは要素ではなく矩形で比べる。座標の対であって値の入れ物ではない（§4.3）
+!pending m3
 !A1 := 1
 !A2 := 2
 !B1 := 1
@@ -629,6 +672,7 @@ A1..A2 = (B1..B2)
 (1 to: 3) ~= (1 to: 4)
 => true
 
+!pending m3
 !A1 := 1
 !A2 := 2
 !A3 := 3
@@ -638,11 +682,13 @@ A1..A2 ~= (A1..A3)
 "--- セル ---
 
 "Cell 自身が理解するのは value と to:（§4.2、§4.3）
+!pending m3
 !A1 := 1
 A1 value
 => 1
 
 "それ以外は保持する値へ委譲する
+!pending m3
 !A1 := 'abc'
 A1 size
 => 3

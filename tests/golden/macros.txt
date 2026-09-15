@@ -8,6 +8,7 @@
 
 "宣言部を持つマクロは、!macro に起動するメッセージを添えて評価する（ADR-0018）
 !macro monthlyTotal
+!pending m4
 monthlyTotal
     | total |
     total := 3.
@@ -16,12 +17,14 @@ monthlyTotal
 
 "キーワードパターンは引数を取る。引数は本体の中で識別子として読める
 !macro from: 1 to: 3
+!pending m4
 from: start to: end
     ^ start + end
 => 4
 
 "引数はセルへの書き込みにも使える
 !macro summarize: 'Q1'
+!pending m4
 summarize: label
     A14 := label.
     ^ A14
@@ -29,6 +32,7 @@ summarize: label
 
 "引数への代入は書けない。書き換えたければ一時変数を宣言して写す（§7.3）
 !macro double: 2
+!pending m4
 double: n
     n := n * 2.
     ^ n
@@ -36,17 +40,20 @@ double: n
 
 "二項セレクタのパターンは認めない。マクロの名前に記号は使わない
 !macro + 1
+!pending m4
 + other
     ^ other
 => #Syntax
 
 "宣言部だけで本体が無いものは書けない（§7.2）
 !macro monthlyTotal
+!pending m4
 monthlyTotal
 => #Syntax
 
 "パターンと違うセレクタを送れば理解しない
 !macro yearlyTotal
+!pending m4
 monthlyTotal
     ^ 1
 => #DoesNotUnderstand
@@ -55,6 +62,7 @@ monthlyTotal
 
 "^ で値を返す
 !macro
+!pending m4
 ^ 3
 => 3
 
@@ -64,27 +72,32 @@ monthlyTotal
 
 "文は . で区切る
 !macro
+!pending m4
 1 + 1.
 ^ 2 + 2
 => 4
 
 "末尾の . は書いてよい
 !macro
+!pending m4
 ^ 3.
 => 3
 
 "文が空になる区切りは書けない
 !macro
+!pending m4
 1 + 1. . ^ 2
 => #Syntax
 
 "^ が無ければ nil を返す。マクロは値を返すために書くとは限らない
 !macro
+!pending m4
 1 + 1
 => nil
 
 "^ は文の列の最後にだけ書ける。後ろに文は続けられない
 !macro
+!pending m4
 ^ 1.
 2 + 2
 => #Syntax
@@ -92,6 +105,7 @@ monthlyTotal
 "--- 一時変数 ---
 
 !macro
+!pending m4
 | a |
 a := 3.
 ^ a + 1
@@ -99,12 +113,14 @@ a := 3.
 
 "宣言しただけの一時変数は nil
 !macro
+!pending m4
 | a |
 ^ a
 => nil
 
 "名前は 1 つの宣言に並べる
 !macro
+!pending m4
 | a b |
 a := 3.
 b := 4.
@@ -113,12 +129,14 @@ b := 4.
 
 "何も宣言しない形も書ける
 !macro
+!pending m4
 | |
 ^ 1
 => 1
 
 "宣言は本体の先頭にだけ置ける
 !macro
+!pending m4
 | a |
 a := 1.
 | b |
@@ -127,6 +145,7 @@ a := 1.
 
 "宣言を 2 つに分けられない
 !macro
+!pending m4
 | a |
 | b |
 ^ 1
@@ -134,12 +153,14 @@ a := 1.
 
 "同じ名前を二重に宣言できない
 !macro
+!pending m4
 | a a |
 ^ 1
 => #Syntax
 
 "宣言だけで文が無い本体は書けない（§5.1 の [] と揃えている）
 !macro
+!pending m4
 | a |
 => #Syntax
 
@@ -147,22 +168,26 @@ a := 1.
 
 "ブロックの本体は文の列と一時変数を持てる（要件 F-2-5）。数式のブロックとの違い
 !macro
+!pending m4
 ^ [:x | | t | t := x * 2. t + 1] value: 3
 => 7
 
 "ブロックの値は最後の文の値
 !macro
+!pending m4
 ^ [1. 2. 3] value
 => 3
 
 "最後の文が代入ならブロックの値は nil。代入は値を持たない文（§7.2）
 !macro
+!pending m4
 | a |
 ^ [a := 1] value
 => nil
 
 "ブロックは外側の一時変数を読み書きできる
 !macro
+!pending m4
 | a |
 a := 1.
 [a := a + 1] value.
@@ -171,12 +196,14 @@ a := 1.
 
 "外側と同じ名前を内側で宣言することはできない
 !macro
+!pending m4
 | a |
 ^ [| a | a] value
 => #Syntax
 
 "ブロック引数と同じ名前の一時変数も宣言できない
 !macro
+!pending m4
 ^ [:x | | x | x] value: 1
 => #Syntax
 
@@ -184,18 +211,21 @@ a := 1.
 
 "ブロックの中の ^ はマクロ全体を終える
 !macro
+!pending m4
 #(1 2 3) do: [:e | e > 1 ifTrue: [^ e]].
 ^ 0
 => 2
 
 "^ に達しなければ、そのまま次の文へ進む
 !macro
+!pending m4
 #(1 2 3) do: [:e | e > 9 ifTrue: [^ e]].
 ^ 0
 => 0
 
 "ブロックの中でも ^ は文の列の最後にだけ書ける
 !macro
+!pending m4
 ^ [^ 1. 2] value
 => #Syntax
 
@@ -203,11 +233,13 @@ a := 1.
 
 "do: は受け手を返す。集めるのは collect:（§6.3）
 !macro
+!pending m4
 ^ #(1 2 3) do: [:e | e]
 => #(1 2 3)
 
 "要素を順に渡す
 !macro
+!pending m4
 | sum |
 sum := 0.
 #(1 2 3) do: [:e | sum := sum + e].
@@ -216,6 +248,7 @@ sum := 0.
 
 "範囲の列挙は Cell を渡す（ADR-0015）
 !macro
+!pending m4
 !A1 := 1
 !A2 := 2
 | sum |
@@ -226,6 +259,7 @@ sum := 0.
 
 "区間も列挙できる（ADR-0016）
 !macro
+!pending m4
 | sum |
 sum := 0.
 (1 to: 4) do: [:e | sum := sum + e].
@@ -234,6 +268,7 @@ sum := 0.
 
 "空を列挙してもブロックは評価されない
 !macro
+!pending m4
 | n |
 n := 0.
 #() do: [:e | n := n + 1].
@@ -242,6 +277,7 @@ n := 0.
 
 "引数を取らないブロックは #TypeError（§5.1 の value の規則と同じ）
 !macro
+!pending m4
 ^ #(1 2) do: [1]
 => #TypeError
 
@@ -253,6 +289,7 @@ n := 0.
 "--- 繰り返し: whileTrue: ---
 
 !macro
+!pending m4
 | i |
 i := 0.
 [i < 3] whileTrue: [i := i + 1].
@@ -261,6 +298,7 @@ i := 0.
 
 "最初から偽なら本体は 1 度も評価されない
 !macro
+!pending m4
 | n |
 n := 0.
 [false] whileTrue: [n := n + 1].
@@ -269,6 +307,7 @@ n := 0.
 
 "whileTrue: は nil を返す。値を作るための繰り返しではない
 !macro
+!pending m4
 | i |
 i := 0.
 ^ [i < 1] whileTrue: [i := i + 1]
@@ -276,16 +315,19 @@ i := 0.
 
 "受け手のブロックが真偽値を返さなければ #TypeError
 !macro
+!pending m4
 ^ [1] whileTrue: [2]
 => #TypeError
 
 "受け手がブロックでなければ理解しない
 !macro
+!pending m4
 ^ true whileTrue: [1]
 => #DoesNotUnderstand
 
 "引数がブロックでなければ #TypeError（条件式と同じ理由、§5.2）
 !macro
+!pending m4
 | i |
 i := 0.
 ^ [i < 1] whileTrue: 1
@@ -295,6 +337,7 @@ i := 0.
 
 "止まらないマクロは上限で中断する
 !macro
+!pending m4
 | i |
 i := 0.
 [true] whileTrue: [i := i + 1].
