@@ -142,8 +142,26 @@ const MACRO_DIRECTIVE = '!macro';
 /** ケースを保留にするディレクティブ（ADR-0019）。 */
 const PENDING_DIRECTIVE = '!pending';
 
-/** マイルストーン名。タグの綴りに合わせる（ADR-0006 の `m0.5` / `m1` / `m3.5`）。 */
-const MILESTONE = /^m[0-9]+(\.5)?$/;
+/**
+ * 受け付けるマイルストーン名。要件定義書 §8 の M0〜M7 に対応し、
+ * 綴りはタグに合わせる（ADR-0006 の `m0.5` / `m1` / `m3.5`）。
+ *
+ * **形ではなく実在する名前で検査する。** `m33` のような打ち間違いを形だけで通すと、
+ * そのマイルストーンは決して来ないので**印を外す契機が無く、ケースが恒久的に検査の外へ出る**。
+ * マイルストーンが増えたらここへ足す（足し忘れれば、その名前を使った時点で落ちる）。
+ */
+const MILESTONES: readonly string[] = [
+  'm0',
+  'm0.5',
+  'm1',
+  'm2',
+  'm3',
+  'm3.5',
+  'm4',
+  'm5',
+  'm6',
+  'm7',
+];
 
 /**
  * `!macro` か `!macro <送信>` の行か。
@@ -211,11 +229,12 @@ export function parseGoldenFile(text: string, fileName = '<golden>'): GoldenCase
  */
 function parsePending(line: SourceLine, fileName: string): string {
   const milestone = line.text.trim().slice(PENDING_DIRECTIVE.length).trim();
-  if (!MILESTONE.test(milestone)) {
+  if (!MILESTONES.includes(milestone)) {
     throw new GoldenParseError(
       `${fileName}:${line.no}: "${PENDING_DIRECTIVE}" には、そのケースが緑になる` +
         `マイルストーンを "${PENDING_DIRECTIVE} m3" の形で添えてください` +
-        `（要件定義書 §8 の M0〜M7 に対応する m0 / m0.5 / m1 …）。`,
+        `（要件定義書 §8 に対応する ${MILESTONES.join(' / ')} のいずれか。` +
+        `指定された値: ${JSON.stringify(milestone)}）。`,
       line.no,
     );
   }

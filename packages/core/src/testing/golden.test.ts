@@ -520,3 +520,25 @@ describe('runGoldenCases の保留のケース', () => {
     expect(failures).toHaveLength(1);
   });
 });
+
+describe('parseGoldenFile の !pending が受け付けるマイルストーン名', () => {
+  // 要件定義書 §8 のマイルストーン。印を外す契機は、そのマイルストーンが来ることだけである。
+  const milestones = ['m0', 'm0.5', 'm1', 'm2', 'm3', 'm3.5', 'm4', 'm5', 'm6', 'm7'];
+
+  it.each(milestones)('実在するマイルストーン %s を受け付ける', (milestone) => {
+    expect(parseGoldenFile([`!pending ${milestone}`, '3', '=> 3'].join('\n'))[0]?.pending).toBe(
+      milestone,
+    );
+  });
+
+  // 存在しない名前を通すと、どのマイルストーンでも外されない印になり、
+  // そのケースが恒久的に検査の外へ出る（ADR-0019）。
+  it.each(['m33', 'm99', 'm8', 'm1.5', 'm01', 'm', 'M3', 'm3.0'])(
+    '存在しないマイルストーン %s を拒否する',
+    (milestone) => {
+      expect(() =>
+        parseGoldenFile([`!pending ${milestone}`, '3', '=> 3'].join('\n'), 'a.txt'),
+      ).toThrow(/マイルストーン/);
+    },
+  );
+});
