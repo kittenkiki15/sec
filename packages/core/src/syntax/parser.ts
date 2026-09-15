@@ -147,6 +147,13 @@ const isBar = (token: Token | undefined): boolean =>
 /** `'It''s'` → `It's`。引用符を外し、二重にした引用符を 1 つに戻す（§2.2）。 */
 const unquote = (text: string): string => text.slice(1, -1).replaceAll("''", "'");
 
+/**
+ * 2 つのトークンが原文で隣り合っているか（間に空白もコメントも無いか）。
+ * キーワードセレクタは ASCII に限られる（§1.2）ので、長さは列の差でそのまま測れる。
+ */
+const adjoins = (left: Token, right: Token): boolean =>
+  left.line === right.line && left.column + left.text.length === right.column;
+
 /** 整数のリテラルの値。指数は仮数の種別を変えない（§2.1）ので、`1e3` もここに来る。 */
 const integerValue = (text: string): bigint => {
   const [mantissa = '', exponent] = text.split('e');
@@ -249,12 +256,16 @@ export function parseFormula(source: string): Expression {
       case 'identifier':
       case 'binary':
         return { kind: 'symbol', value: token.text };
-      // キーワードは 1 つずつ切り出されるので、続く限り連ねて 1 つのセレクタに戻す
-      // （`#(at:put:)` は `#at:put:`）。§1.4 の最長一致をシンボルの綴りにも及ぼす。
+      // キーワードは 1 つずつ切り出されるので、**隣り合っている間だけ**連ねて
+      // 1 つのセレクタに戻す（`#(at:put:)` は `#at:put:`、`#(at: put:)` は 2 要素）。
+      // 走査が文字を追う Smalltalk の実装と同じ切れ方で、`#(12)` と `#(1 2)` の
+      // 区別（§2.4）と同じ性質でもある。
       case 'keyword': {
+        let last = token;
         let spelling = token.text;
-        for (let next = peek(); next?.kind === 'keyword'; next = peek()) {
+        for (let next = peek(); next?.kind === 'keyword' && adjoins(last, next); next = peek()) {
           spelling += next.text;
+          last = next;
           index += 1;
         }
         return { kind: 'symbol', value: spelling };

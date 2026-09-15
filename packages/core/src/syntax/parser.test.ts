@@ -160,6 +160,12 @@ describe('parseFormula', () => {
       expect(tree('#(at:put:)')).toBe('#(#at:put:)');
     });
 
+    it('裸のキーワードは隣り合っているときだけ 1 つのセレクタになる', () => {
+      expect(tree('#(at: put:)')).toBe('#(#at: #put:)');
+      expect(tree('#(at:put: foo)')).toBe('#(#at:put: #foo)');
+      expect(tree('#(at:foo)')).toBe('#(#at: #foo)');
+    });
+
     it('裸の二項セレクタもシンボルになる。式は書けない', () => {
       expect(tree('#(1 + 2)')).toBe('#(1 #+ 2)');
       expect(tree('#(1-2)')).toBe('#(1 #- 2)');
