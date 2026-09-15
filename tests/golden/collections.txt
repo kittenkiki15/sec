@@ -1,0 +1,652 @@
+"配列・範囲・区間・セルのセレクタ。仕様書 §6.3 に対応する。
+"
+"添字は 1 起点、範囲外は #SubscriptOutOfBounds（ADR-0014）。
+"集計は nil の要素を無視する（ADR-0010）。列挙は無視しない。
+"範囲の列挙はセル（Cell）を渡し、配列の列挙は値を渡す。
+
+"--- 配列の基本 ---
+
+#(1 2 3) size
+=> 3
+
+#() size
+=> 0
+
+#() isEmpty
+=> true
+
+#(1 2 3) isEmpty
+=> false
+
+#(1 2 3) first
+=> 1
+
+#(1 2 3) last
+=> 3
+
+"添字は 1 起点
+#(1 2 3) at: 1
+=> 1
+
+#(1 2 3) at: 3
+=> 3
+
+#(1 2 3) at: 0
+=> #SubscriptOutOfBounds
+
+#(1 2 3) at: 4
+=> #SubscriptOutOfBounds
+
+"first と last は添字アクセスなので、空なら範囲外。集計の nil とは分ける
+#() first
+=> #SubscriptOutOfBounds
+
+#() last
+=> #SubscriptOutOfBounds
+
+"添字が整数でなければ型の誤り。範囲外の判定より先（§6.0 の検査の順序）
+#(1 2 3) at: 'x'
+=> #TypeError
+
+#(1 2 3) at: 1.5
+=> #TypeError
+
+"--- 配列の集計 ---
+
+#(1 2 3) sum
+=> 6
+
+#(1 2 3) count
+=> 3
+
+#(1 2 3) min
+=> 1
+
+#(1 2 3) max
+=> 3
+
+#(1 2 4) average
+=> 2.3333333333333335
+
+"割り切れれば整数（§6.1 の / と同じ）
+#(1 2 3) average
+=> 2
+
+"空の集計。単位元があるものだけが値を返す（ADR-0010）
+#() sum
+=> 0
+
+#() count
+=> 0
+
+#() min
+=> nil
+
+#() max
+=> nil
+
+#() average
+=> nil
+
+"数でない要素があれば型の誤り。sum だけでなく min / max / average も同じ
+#(1 'a' 3) sum
+=> #TypeError
+
+#(1 'a' 3) min
+=> #TypeError
+
+#(1 'a' 3) max
+=> #TypeError
+
+#(1 'a' 3) average
+=> #TypeError
+
+"count は数を要求しない。個数を数えるだけ
+#(1 'a' 3) count
+=> 3
+
+"--- 配列の列挙 ---
+
+"配列は値を渡す
+#(1 2 3) collect: [:x | x * 2]
+=> #(2 4 6)
+
+#(1 2 3) select: [:x | x > 1]
+=> #(2 3)
+
+#(1 2 3) reject: [:x | x > 1]
+=> #(1)
+
+#(1 2 3) detect: [:x | x > 1] ifNone: [0]
+=> 2
+
+#(1 2 3) detect: [:x | x > 9] ifNone: [0]
+=> 0
+
+#(1 2 3) inject: 0 into: [:acc :x | acc + x]
+=> 6
+
+#(3 1 2) sorted: [:a :b | a < b]
+=> #(1 2 3)
+
+#(3 1 2) sorted: [:a :b | a > b]
+=> #(3 2 1)
+
+"空に対する列挙
+#() collect: [:x | x * 2]
+=> #()
+
+#() detect: [:x | x > 1] ifNone: [0]
+=> 0
+
+#() inject: 0 into: [:acc :x | acc + x]
+=> 0
+
+"引数がブロックでなければ型の誤り
+#(1 2 3) collect: 1
+=> #TypeError
+
+"ブロックの引数の数が合わなければ型の誤り（§5.1）
+#(1 2 3) collect: [:a :b | a]
+=> #TypeError
+
+#(1 2 3) inject: 0 into: [:acc | acc]
+=> #TypeError
+
+"--- 範囲 ---
+
+"範囲の大きさはセルの数。値が入っていなくてもよい
+A1..A3 size
+=> 3
+
+A1..B2 size
+=> 4
+
+"範囲が空になることはない。セル参照は必ず 1 つ以上のセルを指す
+A1..A1 size
+=> 1
+
+A1..A1 isEmpty
+=> false
+
+"同じ矩形なら等しい。正規化した後で比べる（§4.3）
+A1..B2 = (B2..A1)
+=> true
+
+A1..A3 = (A1..A2)
+=> false
+
+"--- 範囲の列挙はセルを渡す ---
+
+"範囲の要素は Cell。value を送れることで見分けられる
+!A1 := 1
+!A2 := 2
+!A3 := 3
+A1..A3 first value
+=> 1
+
+"表記はセルが保持する値に従う（§0.3）ので、見た目では配列と区別が付かない
+!A1 := 1
+!A2 := 2
+!A3 := 3
+A1..A3 collect: [:c | c]
+=> #(1 2 3)
+
+"value を送れば Cell であることが分かる
+!A1 := 1
+!A2 := 2
+!A3 := 3
+A1..A3 collect: [:c | c value]
+=> #(1 2 3)
+
+"委譲は範囲の中でも働く（§4.2 の規則 2）
+!A1 := 1
+!A2 := 2
+!A3 := 3
+A1..A3 collect: [:c | c * 2]
+=> #(2 4 6)
+
+"列挙は行優先。左から右へ進み、次の行へ移る
+!A1 := 1
+!B1 := 2
+!A2 := 3
+!B2 := 4
+A1..B2 collect: [:c | c value]
+=> #(1 2 3 4)
+
+"collect: 以外の列挙も Cell を渡す（ADR-0015）。
+"ブロックの中で value を送れることが、値を渡す実装との違いになる
+!A1 := 1
+!A2 := 2
+!A3 := 3
+A1..A3 select: [:c | c value > 1]
+=> #(2 3)
+
+"選び出した結果の要素も Cell のまま
+!A1 := 1
+!A2 := 2
+!A3 := 3
+(A1..A3 select: [:c | c value > 1]) first value
+=> 2
+
+!A1 := 1
+!A2 := 2
+!A3 := 3
+A1..A3 reject: [:c | c value > 1]
+=> #(1)
+
+"detect:ifNone: が返すのも Cell
+!A1 := 1
+!A2 := 2
+!A3 := 3
+(A1..A3 detect: [:c | c value > 1] ifNone: [0]) value
+=> 2
+
+"見つからなければ ifNone: を評価した値。こちらは Cell ではない
+!A1 := 1
+!A2 := 2
+!A3 := 3
+A1..A3 detect: [:c | c value > 9] ifNone: [0]
+=> 0
+
+"inject:into: のブロックは累積値と Cell を受け取る
+!A1 := 1
+!A2 := 2
+!A3 := 3
+A1..A3 inject: 0 into: [:acc :c | acc + c value]
+=> 6
+
+"sorted: の比較ブロックにも Cell が渡る
+!A1 := 1
+!A2 := 2
+!A3 := 3
+A1..A3 sorted: [:a :b | a value > b value]
+=> #(3 2 1)
+
+"委譲が働くので value を省いても書ける（§4.2 の規則 2）
+!A1 := 1
+!A2 := 2
+!A3 := 3
+A1..A3 select: [:c | c > 1]
+=> #(2 3)
+
+"at: も Cell を返す。単項はキーワードより強い（§3.5）ので、
+"at: の結果に value を送るには括弧が要る
+!A1 := 10
+!A2 := 20
+((A1..A2) at: 2) value
+=> 20
+
+!A1 := 10
+!A2 := 20
+((A1..A2) at: 1) value
+=> 10
+
+"last も Cell。単項どうしは左から右なので括弧は要らない
+!A1 := 10
+!A2 := 20
+A1..A2 last value
+=> 20
+
+"at: の添字も行優先で数える
+!A1 := 1
+!B1 := 2
+!A2 := 3
+!B2 := 4
+((A1..B2) at: 3) value
+=> 3
+
+"添字は 1 起点。範囲外は #SubscriptOutOfBounds
+(A1..A3) at: 0
+=> #SubscriptOutOfBounds
+
+(A1..A3) at: 4
+=> #SubscriptOutOfBounds
+
+"添字が整数でなければ型の誤り（§6.0 の検査の順序）
+(A1..A3) at: 'x'
+=> #TypeError
+
+"--- 範囲と空セル ---
+
+"集計は空セルを無視する（ADR-0010）
+!A1 := 1
+!A3 := 3
+A1..A3 sum
+=> 4
+
+"count は空セルを数えない。size は数える
+!A1 := 1
+!A3 := 3
+A1..A3 count
+=> 2
+
+!A1 := 1
+!A3 := 3
+A1..A3 size
+=> 3
+
+"average は空セルを除いた個数で割る
+!A1 := 1
+!A3 := 3
+A1..A3 average
+=> 2
+
+"max も空セルを無視する
+!A1 := 1
+!A2 := 5
+!A3 := 3
+A1..A3 max
+=> 5
+
+"集計は要素を値に解決してから扱う。数でない値があれば型の誤りになる
+!A1 := 1
+!A2 := 'a'
+!A3 := 3
+A1..A3 sum
+=> #TypeError
+
+!A1 := 1
+!A2 := 'a'
+!A3 := 3
+A1..A3 min
+=> #TypeError
+
+"count は値を要求しないので、文字列が入っていても数える
+!A1 := 1
+!A2 := 'a'
+!A3 := 3
+A1..A3 count
+=> 3
+
+!A1 := 1
+!A3 := 3
+A1..A3 max
+=> 3
+
+"すべて空なら、空の集計と同じ扱い
+A1..A3 sum
+=> 0
+
+A1..A3 count
+=> 0
+
+A1..A3 average
+=> nil
+
+A1..A3 min
+=> nil
+
+"列挙は無視しない。空セルは nil を保持する Cell として渡る
+!A1 := 1
+!A3 := 3
+A1..A3 collect: [:c | c value]
+=> #(1 nil 3)
+
+"そのため空セルを含む算術はエラーになる（ADR-0010）
+!A1 := 1
+!A3 := 3
+A1..A3 collect: [:c | c * 2]
+=> #DoesNotUnderstand
+
+"ifNil: で避けられる
+!A1 := 1
+!A3 := 3
+A1..A3 collect: [:c | c ifNil: [0]]
+=> #(1 0 3)
+
+"--- 数の区間 ---
+
+"Number への to: は区間を作る（ADR-0016）。セルへの to: が作る範囲とは別のクラス
+1 to: 5
+=> 1 to: 5
+
+(1 to: 5) size
+=> 5
+
+(1 to: 5) first
+=> 1
+
+(1 to: 5) last
+=> 5
+
+(1 to: 5) sum
+=> 15
+
+(1 to: 5) collect: [:x | x * 2]
+=> #(2 4 6 8 10)
+
+(1 to: 5) select: [:x | x > 3]
+=> #(4 5)
+
+"区間の at: は数を返す。範囲と違って Cell ではない
+(1 to: 5) at: 1
+=> 1
+
+(1 to: 5) at: 5
+=> 5
+
+"添字は 1 起点。値ではなく位置で数える
+(10 to: 14) at: 1
+=> 10
+
+(10 to: 14) at: 3
+=> 12
+
+(1 to: 5) at: 0
+=> #SubscriptOutOfBounds
+
+(1 to: 5) at: 6
+=> #SubscriptOutOfBounds
+
+(1 to: 5) at: 1.5
+=> #TypeError
+
+"区間の要素は数なので value を理解しない
+(1 to: 5) first value
+=> #DoesNotUnderstand
+
+"区間の集計
+(1 to: 5) count
+=> 5
+
+(1 to: 5) min
+=> 1
+
+(1 to: 5) max
+=> 5
+
+(1 to: 5) average
+=> 3
+
+"区間の列挙。返り値は Array であって Interval ではない
+(1 to: 5) reject: [:x | x > 3]
+=> #(1 2 3)
+
+(1 to: 5) detect: [:x | x > 3] ifNone: [0]
+=> 4
+
+(1 to: 5) detect: [:x | x > 9] ifNone: [0]
+=> 0
+
+(1 to: 5) inject: 0 into: [:acc :x | acc + x]
+=> 15
+
+(1 to: 3) sorted: [:a :b | a > b]
+=> #(3 2 1)
+
+"空の区間の集計は、空の配列と同じ扱い
+(5 to: 1) count
+=> 0
+
+(5 to: 1) max
+=> nil
+
+(5 to: 1) average
+=> nil
+
+(5 to: 1) collect: [:x | x * 2]
+=> #()
+
+"逆向きは空になる。範囲（§4.3）が正規化するのとは逆の扱い
+5 to: 1
+=> 5 to: 1
+
+(5 to: 1) size
+=> 0
+
+(5 to: 1) isEmpty
+=> true
+
+(5 to: 1) sum
+=> 0
+
+(5 to: 1) min
+=> nil
+
+(5 to: 1) first
+=> #SubscriptOutOfBounds
+
+"端が等しければ 1 要素
+(3 to: 3) size
+=> 1
+
+"同じ端なら等しい
+(1 to: 3) = (1 to: 3)
+=> true
+
+(1 to: 3) = (1 to: 4)
+=> false
+
+"端は小数でもよい。要素は位置から計算し（start + (i - 1)）、
+"個数は floor(stop - start) + 1 とする（負なら 0）。
+"足し込みで進めると、1 を足しても値が変わらない大きさで止まらなくなる
+(1 to: 3.5) size
+=> 3
+
+(1 to: 3.5) last
+=> 3
+
+(1 to: 3.5) sum
+=> 6
+
+"下端が小数なら要素も小数になる
+(1.5 to: 4) size
+=> 3
+
+(1.5 to: 4) at: 2
+=> 2.5
+
+(1.5 to: 4) last
+=> 3.5
+
+"上端が下端より小さければ空。個数の式が負になる場合も 0 とする
+(1 to: 0) size
+=> 0
+
+(1 to: 0.5) size
+=> 0
+
+"1 を足しても値が変わらない大きさでも、個数が先に決まるので止まる。
+"倍精度では 1e21 + 1 が 1e21 と等しい
+(1.0e21 to: 1.0e21) size
+=> 1
+
+"個数は to: の時点で決まる。小数の端で差が倍精度に収まらなければ区間を作れない
+(-1.0e308 to: 1.0e308)
+=> #Overflow
+
+"size を送るまでもなく、区間が作れていない
+(-1.0e308 to: 1.0e308) size
+=> #Overflow
+
+"差が収まれば作れる
+(0.0 to: 1.0e308) isEmpty
+=> false
+
+"整数の端なら任意精度なので、どれだけ離れていても作れる
+(1 to: 1e400) isEmpty
+=> false
+
+"引数が数でなければ型の誤り
+1 to: 'a'
+=> #TypeError
+
+"--- 等価性 ---
+
+"配列と区間は、同じクラス・同じ長さで、対応する位置の要素がすべて等しいとき等しい
+#(1 2) = #(1 2)
+=> true
+
+"順序が違えば等しくない
+#(1 2) = #(2 1)
+=> false
+
+"長さが違えば等しくない
+#(1 2) = #(1 2 3)
+=> false
+
+#() = #()
+=> true
+
+"入れ子も要素として比べる
+#(1 #(2 3)) = #(1 #(2 3))
+=> true
+
+#(1 #(2 3)) = #(1 #(3 2))
+=> false
+
+"要素の比較は §6.1 の = に従うので、整数と小数は値が等しければ等しい
+#(1) = #(1.0)
+=> true
+
+"クラスが違えば等しくない（シンボルと文字列と同じ扱い）
+#(1 2) = (1 to: 2)
+=> false
+
+#(1) = 1
+=> false
+
+"区間も要素で比べる。端の書き方が違っても要素が同じなら等しい
+(1 to: 3) = (1 to: 3.5)
+=> true
+
+"範囲だけは要素ではなく矩形で比べる。座標の対であって値の入れ物ではない（§4.3）
+!A1 := 1
+!A2 := 2
+!B1 := 1
+!B2 := 2
+A1..A2 = (B1..B2)
+=> false
+
+"~= は = の否定
+#(1 2) ~= #(2 1)
+=> true
+
+#(1 2) ~= #(1 2)
+=> false
+
+(1 to: 3) ~= (1 to: 4)
+=> true
+
+!A1 := 1
+!A2 := 2
+!A3 := 3
+A1..A2 ~= (A1..A3)
+=> true
+
+"--- セル ---
+
+"Cell 自身が理解するのは value と to:（§4.2、§4.3）
+!A1 := 1
+A1 value
+=> 1
+
+"それ以外は保持する値へ委譲する
+!A1 := 'abc'
+A1 size
+=> 3
+
+"配列の要素は値なので value を理解しない
+#(1 2 3) first value
+=> #DoesNotUnderstand
