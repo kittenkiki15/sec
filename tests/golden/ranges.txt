@@ -7,38 +7,47 @@
 "--- 正準形 ---
 
 "Cell>>to: が Range を返す。表記は正準形と同じ（ADR-0007）
+!pending m3
 A1 to: A3
 => A1 to: A3
 
 "矩形も書ける
+!pending m3
 A1 to: B2
 => A1 to: B2
 
 "1 つのセルだけの範囲
+!pending m3
 A1 to: A1
 => A1 to: A1
 
 "正準形は通常の空白規則に従う。キーワードと引数の間の空白は省ける（§1.4）
+!pending m3
 A1 to:A3
 => A1 to: A3
 
 "--- 糖衣 ---
 
 "構文解析の時点で to: の送信へ脱糖するので、結果は正準形と同じ（ADR-0007）
+!pending m3
 A1..A3
 => A1 to: A3
 
+!pending m3
 A1:A3
 => A1 to: A3
 
+!pending m3
 A1..B2
 => A1 to: B2
 
+!pending m3
 A1:B2
 => A1 to: B2
 
 "範囲トークンも一次式の終端なので、その後の - は二項セレクタになる（§2.1）。
 "Range は - を理解しないため #DoesNotUnderstand であり、#Syntax ではない
+!pending m3
 A1:B2 -3
 => #DoesNotUnderstand
 
@@ -74,32 +83,39 @@ A3
 "--- 向きの正規化 ---
 
 "右下から左上へ書いても同じ矩形を指す
+!pending m3
 A3 to: A1
 => A1 to: A3
 
+!pending m3
 B2 to: A1
 => A1 to: B2
 
 "行と列で向きが別々でも正規化される
+!pending m3
 B1 to: A2
 => A1 to: B2
 
 "糖衣でも同じ
+!pending m3
 A3..A1
 => A1 to: A3
 
+!pending m3
 A3:A1
 => A1 to: A3
 
 "--- キーワードメッセージとの区別 ---
 
 "コロンの前後に空白を許さない規則があるので、キーワード送信と紛れない（ADR-0007 D-1）
+!pending m3
 !A1 := 3
 !B1 := 5
 A1 max: B1
 => 5
 
 "キーワードと引数の間に空白が無くても、max: は 1 つのキーワードトークン（§1.4）
+!pending m3
 !A1 := 3
 !B1 := 5
 A1 max:B1

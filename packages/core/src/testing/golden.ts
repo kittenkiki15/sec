@@ -53,6 +53,17 @@
  *     ^ start + end
  * => 4
  * ```
+ *
+ * まだ実装が無くて緑にできないケースには、緑になるマイルストーンを添える（ADR-0019）。
+ * **保留のケースは落ちても失敗にしないが、通ってしまえば失敗になる。**
+ * 印を外し忘れたケースが検査の外に残らないようにするため。
+ *
+ * ```text
+ * !pending m3
+ * !A1 := 1
+ * A1 + 1
+ * => 2
+ * ```
  */
 
 /**
@@ -78,6 +89,11 @@ export interface GoldenCase {
    * 指定の無いセルは現れない。ケースごとに独立している。
    */
   readonly sheet: ReadonlyMap<string, string>;
+  /**
+   * このケースが緑になるマイルストーン（`m3`）。`null` なら今すぐ通っていなければならない。
+   * **保留のケースは落ちても失敗にしないが、通ってしまえば失敗になる**（ADR-0019）。
+   */
+  readonly pending: string | null;
   /** 期待される評価結果の表記。 */
   readonly expected: string;
   /** ファイル内での式の開始行（1 始まり）。失敗時の報告に使う。 */
@@ -123,6 +139,30 @@ const DIRECTIVE_SEPARATOR = ':=';
 /** 原文をマクロとして読ませるディレクティブ（ADR-0018）。 */
 const MACRO_DIRECTIVE = '!macro';
 
+/** ケースを保留にするディレクティブ（ADR-0019）。 */
+const PENDING_DIRECTIVE = '!pending';
+
+/**
+ * 受け付けるマイルストーン名。要件定義書 §8 の M0〜M7 に対応し、
+ * 綴りはタグに合わせる（ADR-0006 の `m0.5` / `m1` / `m3.5`）。
+ *
+ * **形ではなく実在する名前で検査する。** `m33` のような打ち間違いを形だけで通すと、
+ * そのマイルストーンは決して来ないので**印を外す契機が無く、ケースが恒久的に検査の外へ出る**。
+ * マイルストーンが増えたらここへ足す（足し忘れれば、その名前を使った時点で落ちる）。
+ */
+const MILESTONES: readonly string[] = [
+  'm0',
+  'm0.5',
+  'm1',
+  'm2',
+  'm3',
+  'm3.5',
+  'm4',
+  'm5',
+  'm6',
+  'm7',
+];
+
 /**
  * `!macro` か `!macro <送信>` の行か。
  * `!macros` のように続きが語の一部になっているものは含めない。
@@ -130,6 +170,15 @@ const MACRO_DIRECTIVE = '!macro';
 const isMacroDirective = (text: string): boolean => {
   const trimmed = text.trim();
   return trimmed === MACRO_DIRECTIVE || trimmed.startsWith(`${MACRO_DIRECTIVE} `);
+};
+
+/**
+ * `!pending <マイルストーン>` の行か。
+ * `!pendings` のように続きが語の一部になっているものは含めない。
+ */
+const isPendingDirective = (text: string): boolean => {
+  const trimmed = text.trim();
+  return trimmed === PENDING_DIRECTIVE || trimmed.startsWith(`${PENDING_DIRECTIVE} `);
 };
 
 /** ADR-0007 D-2 のセル参照の形。`!` は二項セレクタの文字ではないので、式と衝突しない。 */
@@ -172,6 +221,26 @@ export function parseGoldenFile(text: string, fileName = '<golden>'): GoldenCase
   return blocks.map((block) => parseBlock(block, fileName));
 }
 
+/**
+ * `!pending <マイルストーン>` を 1 行解析し、マイルストーン名を返す。
+ *
+ * **名前を検証するのは、綴りの誤りを黙って通さないため。** `!pending m33` を受け付けると、
+ * どのマイルストーンでも外されない印になり、保留が永久に残る。
+ */
+function parsePending(line: SourceLine, fileName: string): string {
+  const milestone = line.text.trim().slice(PENDING_DIRECTIVE.length).trim();
+  if (!MILESTONES.includes(milestone)) {
+    throw new GoldenParseError(
+      `${fileName}:${line.no}: "${PENDING_DIRECTIVE}" には、そのケースが緑になる` +
+        `マイルストーンを "${PENDING_DIRECTIVE} m3" の形で添えてください` +
+        `（要件定義書 §8 に対応する ${MILESTONES.join(' / ')} のいずれか。` +
+        `指定された値: ${JSON.stringify(milestone)}）。`,
+      line.no,
+    );
+  }
+  return milestone;
+}
+
 /** `!A1 := 内容` の形のシートディレクティブを 1 行解析する。 */
 function parseDirective(line: SourceLine, fileName: string): { cell: string; content: string } {
   const text = line.text.trimStart().slice(DIRECTIVE_PREFIX.length);
@@ -179,7 +248,8 @@ function parseDirective(line: SourceLine, fileName: string): { cell: string; con
   if (separator < 0) {
     throw new GoldenParseError(
       `${fileName}:${line.no}: セルの指定は "!A1 := 内容"、` +
-        `マクロの指定は "${MACRO_DIRECTIVE}" の形で書いてください。` +
+        `マクロの指定は "${MACRO_DIRECTIVE}"、保留の指定は "${PENDING_DIRECTIVE} m3" の` +
+        `形で書いてください。` +
         `セルへの代入は ":=" と書きます（ADR-0007 D-3）。`,
       line.no,
     );
@@ -223,6 +293,14 @@ function parseBlock(block: readonly SourceLine[], fileName: string): GoldenCase 
     kind === 'macro' ? head.text.trim().slice(MACRO_DIRECTIVE.length).trim() || null : null;
   if (kind === 'macro') bodyStart = 1;
 
+  // `!macro` の次、セルの指定より前。位置を 1 箇所に固定して、同じことの書き方を増やさない。
+  const pendingLine = block[bodyStart];
+  let pending: string | null = null;
+  if (pendingLine !== undefined && isPendingDirective(pendingLine.text)) {
+    pending = parsePending(pendingLine, fileName);
+    bodyStart += 1;
+  }
+
   for (; bodyStart < block.length; bodyStart += 1) {
     const line = block[bodyStart];
     if (line === undefined || !line.text.trimStart().startsWith(DIRECTIVE_PREFIX)) break;
@@ -230,6 +308,15 @@ function parseBlock(block: readonly SourceLine[], fileName: string): GoldenCase 
     if (isMacroDirective(line.text)) {
       throw new GoldenParseError(
         `${fileName}:${line.no}: "${MACRO_DIRECTIVE}" はケースの最初の行に書いてください。`,
+        line.no,
+      );
+    }
+
+    if (isPendingDirective(line.text)) {
+      throw new GoldenParseError(
+        `${fileName}:${line.no}: "${PENDING_DIRECTIVE}" は` +
+          `${kind === 'macro' ? `"${MACRO_DIRECTIVE}" の次の行、` : 'ケースの最初の行、'}` +
+          `セルの指定より前に 1 つだけ書いてください。`,
         line.no,
       );
     }
@@ -289,12 +376,16 @@ function parseBlock(block: readonly SourceLine[], fileName: string): GoldenCase 
     throw new GoldenParseError(`${fileName}:${expectLine.no}: 期待値が空です。`, expectLine.no);
   }
 
-  return { source, kind, send, expected, line: first.no, sheet };
+  return { source, kind, send, pending, expected, line: first.no, sheet };
 }
 
 /**
  * 全ケースを評価し、期待どおりにならなかったものを返す。
  * 1 件失敗しても残りの評価は続ける。仕様のどこまでが通っているかを一度に把握するため。
+ *
+ * **保留のケース（`!pending`）は落ちても失敗にしない。** まだ実装が無いことは既知だからである。
+ * **ただし通ってしまったら失敗にする**（ADR-0019）。黙って見逃すと、印が古いことと
+ * 保留のままであることが区別できなくなり、外し忘れた印が網羅の穴として残る。
  */
 export function runGoldenCases(
   cases: readonly GoldenCase[],
@@ -308,15 +399,19 @@ export function runGoldenCases(
       const { source, sheet, kind, send } = testCase;
       actual = evaluate({ source, sheet, kind, send });
     } catch (error) {
-      failures.push({
-        testCase,
-        actual: null,
-        thrown: error instanceof Error ? error.message : String(error),
-      });
+      // 保留のケースは、評価器がそのノードを知らずに投げるのが正常な姿。
+      if (testCase.pending === null) {
+        failures.push({
+          testCase,
+          actual: null,
+          thrown: error instanceof Error ? error.message : String(error),
+        });
+      }
       continue;
     }
 
-    if (actual !== testCase.expected) {
+    const matched = actual === testCase.expected;
+    if (matched !== (testCase.pending === null)) {
       failures.push({ testCase, actual, thrown: null });
     }
   }
@@ -329,7 +424,13 @@ export function formatGoldenFailures(failures: readonly GoldenFailure[], fileNam
   const header = `${fileName}: ${failures.length} 件のゴールデンテストが失敗しました。`;
 
   const details = failures.map(({ testCase, actual, thrown }) => {
-    const outcome = thrown === null ? `実際  : ${actual}` : `例外  : ${thrown}`;
+    // 保留のケースが失敗に含まれるのは、通ってしまったときだけ（ADR-0019）。
+    const outcome =
+      testCase.pending !== null
+        ? `実際  : ${actual}（"${PENDING_DIRECTIVE} ${testCase.pending}" の印を外してください）`
+        : thrown === null
+          ? `実際  : ${actual}`
+          : `例外  : ${thrown}`;
     return [
       `${fileName}:${testCase.line}`,
       `  式    : ${testCase.source.split('\n').join('\n          ')}`,
