@@ -1,12 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { LexicalError } from './lexer.ts';
-import { type Expression, ParseError, parseFormula } from './parser.ts';
+import {
+  type Body,
+  type MacroDefinition,
+  ParseError,
+  parseFormula,
+  parseMacroBody,
+  parseMacroDefinition,
+  type Statement,
+} from './parser.ts';
 
 /**
  * 木の形を 1 行で書く。S 式に寄せた表記で、`(受け手 セレクタ 引数...)` の順に並べる。
  * **値の表記（§0.3）とは別物。** ここで見たいのは木の形であって、評価結果の見せ方ではない。
  */
-const show = (node: Expression): string => {
+const show = (node: Statement): string => {
   switch (node.kind) {
     case 'integer':
       return node.value.toString();
@@ -29,21 +37,43 @@ const show = (node: Expression): string => {
     case 'cell':
       return node.name;
     case 'block':
-      return `[${node.parameters.map((name) => `:${name}`).join(' ')} | ${show(node.body)}]`;
+      return `[${node.parameters.map((name) => `:${name}`).join(' ')} | ${showBody(node)}]`;
+    case 'assign':
+      return `(${show(node.target)} := ${show(node.value)})`;
+    case 'return':
+      return `(^ ${show(node.value)})`;
     case 'send':
       return `(${show(node.receiver)} ${node.selector}${node.arguments.map((argument) => ` ${show(argument)}`).join('')})`;
   }
 };
 
+/** 一時変数の宣言と文の列。マクロの本体とマクロのブロックが同じ形を持つ（§7.2、§7.5）。 */
+const showBody = (body: Body): string => {
+  const temporaries = body.temporaries.length > 0 ? `|${body.temporaries.join(' ')}| ` : '';
+  return `${temporaries}${body.statements.map(show).join('. ')}`;
+};
+
 const tree = (source: string): string => show(parseFormula(source));
+
+/** マクロの本体を木にする。**原文は行で書く方が仕様書と見比べやすい。** */
+const macro = (...source: string[]): string => showBody(parseMacroBody(source.join('\n')));
+
+/** マクロの定義を木にする。宣言部を `セレクタ(引数...)` の形で頭に付ける。 */
+const definition = (...source: string[]): string => {
+  const node: MacroDefinition = parseMacroDefinition(source.join('\n'));
+  return `${node.selector}(${node.parameters.join(' ')}) ${showBody(node.body)}`;
+};
 
 /**
  * 構文エラーの中身（位置・説明文）を確かめるために捕まえる。
  * **字句と構文のどちらで見つかっても利用者には同じ `#Syntax`** なので、両方を受ける。
  */
-const errorFrom = (source: string): LexicalError | ParseError => {
+const errorFrom = (
+  source: string,
+  parse: (source: string) => unknown = parseFormula,
+): LexicalError | ParseError => {
   try {
-    parseFormula(source);
+    parse(source);
   } catch (error) {
     if (error instanceof ParseError || error instanceof LexicalError) return error;
     throw error;
@@ -54,6 +84,14 @@ const errorFrom = (source: string): LexicalError | ParseError => {
 /** 位置を見ないケース用。説明文が空でないことだけは常に確かめる（要件 F-8-3）。 */
 const rejects = (source: string): void => {
   expect(errorFrom(source).message).not.toBe('');
+};
+
+const rejectsMacro = (...source: string[]): void => {
+  expect(errorFrom(source.join('\n'), parseMacroBody).message).not.toBe('');
+};
+
+const rejectsDefinition = (...source: string[]): void => {
+  expect(errorFrom(source.join('\n'), parseMacroDefinition).message).not.toBe('');
 };
 
 describe('parseFormula', () => {
@@ -295,7 +333,8 @@ describe('parseFormula', () => {
       expect(parseFormula('[3]')).toEqual({
         kind: 'block',
         parameters: [],
-        body: { kind: 'integer', value: 3n },
+        temporaries: [],
+        statements: [{ kind: 'integer', value: 3n }],
       });
     });
 
@@ -331,6 +370,22 @@ describe('parseFormula', () => {
     it(': に識別子が続かないブロックは構文エラー', () => {
       rejects('[:1 | 1]');
       rejects('[: | 1]');
+    });
+  });
+
+  describe('§5.1 名前の影と二重宣言', () => {
+    it('入れ子のブロックは外側の引数と同じ名前を宣言できない', () => {
+      rejects('[:x | [:x | x] value: 1] value: 2');
+    });
+
+    it('同じ並びに同じ名前を 2 つ書けない', () => {
+      rejects('[:x :x | x] value: 1 value: 2');
+    });
+
+    it('外側と違う名前なら入れ子にできる', () => {
+      expect(tree('[:x | [:y | x + y] value: 1] value: 2')).toBe(
+        '([:x | ([:y | (x + y)] value: 1)] value: 2)',
+      );
     });
   });
 
@@ -404,6 +459,279 @@ describe('parseFormula', () => {
       rejects('[1. 2]');
       rejects('[^ 1]');
       rejects('[:x | | t | t := x. t]');
+    });
+  });
+});
+
+describe('parseMacroBody', () => {
+  describe('§7.2 文の列', () => {
+    it('^ で値を返す', () => {
+      expect(macro('^ 3')).toBe('(^ 3)');
+    });
+
+    it('文は . で区切る', () => {
+      expect(macro('1 + 1.', '^ 2 + 2')).toBe('(1 + 1). (^ (2 + 2))');
+    });
+
+    it('末尾の . は書いてよい', () => {
+      expect(macro('^ 3.')).toBe('(^ 3)');
+      expect(macro('1 + 1.')).toBe('(1 + 1)');
+    });
+
+    it('^ が無ければ返却の無い文の列になる', () => {
+      expect(macro('1 + 1')).toBe('(1 + 1)');
+    });
+
+    it('文が空になる区切りは書けない', () => {
+      rejectsMacro('1 + 1. . ^ 2');
+      rejectsMacro('. ^ 1');
+    });
+
+    it('^ の後ろに文を続けられない', () => {
+      rejectsMacro('^ 1.', '2 + 2');
+      rejectsMacro('^ 1. ^ 2');
+    });
+
+    it('本体には文が 1 つ以上要る', () => {
+      rejectsMacro('');
+      rejectsMacro('   "コメントだけ" ');
+    });
+
+    it('返却は文であって式ではない', () => {
+      rejectsMacro('^ ^ 1');
+      rejectsMacro('1 + ^ 2');
+    });
+  });
+
+  describe('§7.2 一時変数', () => {
+    it('宣言した名前を持つ', () => {
+      expect(macro('| a |', 'a := 3.', '^ a + 1')).toBe('|a| (a := 3). (^ (a + 1))');
+    });
+
+    it('名前は 1 つの宣言に並べる', () => {
+      expect(macro('| a b |', 'a := 3.', 'b := 4.', '^ a + b')).toBe(
+        '|a b| (a := 3). (b := 4). (^ (a + b))',
+      );
+    });
+
+    it('何も宣言しない形も書ける', () => {
+      expect(macro('| |', '^ 1')).toBe('(^ 1)');
+    });
+
+    it('宣言は本体の先頭にだけ置ける', () => {
+      rejectsMacro('| a |', 'a := 1.', '| b |', '^ a');
+    });
+
+    it('宣言を 2 つに分けられない', () => {
+      rejectsMacro('| a |', '| b |', '^ 1');
+    });
+
+    it('同じ名前を二重に宣言できない', () => {
+      rejectsMacro('| a a |', '^ 1');
+    });
+
+    it('宣言だけで文が無い本体は書けない', () => {
+      rejectsMacro('| a |');
+    });
+
+    it('宣言が閉じていないのは構文エラー', () => {
+      rejectsMacro('| a', '^ 1');
+      rejectsMacro('| a 1 |', '^ 1');
+    });
+  });
+
+  describe('§7.3 代入', () => {
+    it('宣言済みの一時変数に代入できる', () => {
+      expect(macro('| a |', 'a := 3.', '^ a')).toBe('|a| (a := 3). (^ a)');
+    });
+
+    it('空白の無い a:=1 も代入（§1.4）', () => {
+      expect(macro('| a |', 'a:=3.', '^ a')).toBe('|a| (a := 3). (^ a)');
+    });
+
+    it('右辺は式ならなんでもよい', () => {
+      expect(macro('| a |', 'a := A1 squared.', '^ a')).toBe('|a| (a := (A1 squared)). (^ a)');
+    });
+
+    it('宣言の無い識別子への代入は構文エラー', () => {
+      rejectsMacro('a := 1.', '^ 1');
+    });
+
+    it('宣言の無い識別子を読むのは構文エラーではない（§4.2 の #Ref）', () => {
+      expect(macro('^ total')).toBe('(^ total)');
+    });
+
+    it('代入は式ではないので式の中に現れない', () => {
+      rejectsMacro('| a |', '^ 3 + (a := 1)');
+      rejectsMacro('| a |', '^ 3 max: (a := 5)');
+      rejectsMacro('| a |', '^ [a := 1] value + (a := 2)');
+    });
+
+    it('連鎖代入も書けない', () => {
+      rejectsMacro('| a b |', 'a := b := 3.', '^ a');
+    });
+
+    it('左辺になれるのは一時変数とセル参照だけ', () => {
+      rejectsMacro('3 := 1.', '^ 3');
+      rejectsMacro('nil := 1.', '^ 1');
+      rejectsMacro('| a |', 'a squared := 1.', '^ a');
+    });
+
+    it('範囲への代入は書けない（§7.9、未決論点 D-4）', () => {
+      rejectsMacro('A1:B2 := 0.', '^ A1');
+    });
+  });
+
+  describe('§7.4 セルへの代入', () => {
+    it('セル参照を左辺に書ける（ADR-0007 D-3）', () => {
+      expect(macro('A1 := 3.', '^ A1')).toBe('(A1 := 3). (^ A1)');
+    });
+
+    it('右辺は式でよい', () => {
+      expect(macro('B1 := (A1 to: A2) sum.', '^ B1')).toBe('(B1 := ((A1 to: A2) sum)). (^ B1)');
+    });
+
+    it('左辺のセルは宣言を要らない', () => {
+      expect(macro('A1 := A1 + 1.', '^ A1')).toBe('(A1 := (A1 + 1)). (^ A1)');
+    });
+  });
+
+  describe('§7.5 マクロのブロック', () => {
+    it('ブロックの本体は文の列と一時変数を持てる', () => {
+      expect(macro('^ [:x | | t | t := x * 2. t + 1] value: 3')).toBe(
+        '(^ ([:x | |t| (t := (x * 2)). (t + 1)] value: 3))',
+      );
+    });
+
+    it('文をいくつでも並べられる', () => {
+      expect(macro('^ [1. 2. 3] value')).toBe('(^ ([ | 1. 2. 3] value))');
+    });
+
+    it('外側の一時変数に代入できる', () => {
+      expect(macro('| a |', '^ [a := 1] value')).toBe('|a| (^ ([ | (a := 1)] value))');
+    });
+
+    it('外側と同じ名前を内側で宣言できない', () => {
+      rejectsMacro('| a |', '^ [| a | a] value');
+    });
+
+    it('ブロック引数と同じ名前の一時変数も宣言できない', () => {
+      rejectsMacro('^ [:x | | x | x] value: 1');
+    });
+
+    it('ブロック引数が外側の名前を影にすることもできない', () => {
+      rejectsMacro('| a |', '^ [:a | a] value: 1');
+    });
+
+    it('本体が空のブロックは書けない（§5.1 と同じ）', () => {
+      rejectsMacro('^ [] value');
+      rejectsMacro('^ [:x | ] value: 1');
+    });
+
+    it('引数は 0〜2 個（要件 F-2-5）', () => {
+      rejectsMacro('^ [:x :y :z | x] value: 1');
+    });
+
+    it('閉じていないブロックは構文エラー', () => {
+      rejectsMacro('^ [1. 2');
+      rejectsMacro('| a |', '^ [a := 1');
+    });
+  });
+
+  describe('§7.5 非局所リターン', () => {
+    it('ブロックの中の ^ を木に載せる', () => {
+      expect(macro('#(1 2 3) do: [:e | e > 1 ifTrue: [^ e]].', '^ 0')).toBe(
+        '(#(1 2 3) do: [:e | ((e > 1) ifTrue: [ | (^ e)])]). (^ 0)',
+      );
+    });
+
+    it('ブロックの中でも ^ は文の列の最後にだけ書ける', () => {
+      rejectsMacro('^ [^ 1. 2] value');
+    });
+
+    it('ブロックの中の ^ の後ろに末尾の . は書ける', () => {
+      expect(macro('^ [^ 1.] value')).toBe('(^ ([ | (^ 1)] value))');
+    });
+  });
+
+  describe('§7.7 数式との境界', () => {
+    it('同じ原文でも開始記号で結果が変わる', () => {
+      expect(macro('^ 3')).toBe('(^ 3)');
+      rejects('^ 3');
+    });
+
+    it('数式が受ける式はマクロでも受ける', () => {
+      expect(macro('3 + 4 * 2')).toBe('((3 + 4) * 2)');
+      expect(macro('#(1 2 3) do: [:e | e]')).toBe('(#(1 2 3) do: [:e | e])');
+    });
+  });
+
+  describe('要件 F-8-3 位置と説明文', () => {
+    it('構文エラーは行と列を持つ', () => {
+      const error = errorFrom(['| a |', 'b := 1.', '^ a'].join('\n'), parseMacroBody);
+      expect(error.line).toBe(2);
+      expect(error.column).toBe(1);
+      expect(error.message).not.toBe('');
+    });
+
+    it('位置は問題のあるトークンを指す', () => {
+      const error = errorFrom(['| a |', '^ 3 + (a := 1)'].join('\n'), parseMacroBody);
+      expect(error.line).toBe(2);
+      expect(error.column).toBe(10);
+    });
+  });
+});
+
+describe('parseMacroDefinition', () => {
+  describe('§7.1 マクロの宣言', () => {
+    it('単項セレクタを名前にできる', () => {
+      expect(definition('monthlyTotal', '| total |', 'total := 3.', '^ total')).toBe(
+        'monthlyTotal() |total| (total := 3). (^ total)',
+      );
+    });
+
+    it('キーワードパターンは引数を取る', () => {
+      expect(definition('from: start to: end', '^ start + end')).toBe(
+        'from:to:(start end) (^ (start + end))',
+      );
+    });
+
+    it('引数は本体の中で識別子として読める', () => {
+      expect(definition('summarize: label', 'A14 := label.', '^ A14')).toBe(
+        'summarize:(label) (A14 := label). (^ A14)',
+      );
+    });
+
+    it('引数への代入は書けない（§7.3）', () => {
+      rejectsDefinition('double: n', 'n := n * 2.', '^ n');
+    });
+
+    it('引数と同じ名前を本体で宣言できない', () => {
+      rejectsDefinition('double: n', '| n |', '^ n');
+      rejectsDefinition('double: n', '^ [:n | n] value: 1');
+    });
+
+    it('同じ名前の引数を 2 つ取れない', () => {
+      rejectsDefinition('from: a to: a', '^ a');
+    });
+
+    it('二項セレクタのパターンは認めない', () => {
+      rejectsDefinition('+ other', '^ other');
+    });
+
+    it('キーワードには識別子が続く', () => {
+      rejectsDefinition('from: 1 to: end', '^ end');
+      rejectsDefinition('from:', '^ 1');
+    });
+
+    it('宣言部だけで本体が無いものは書けない（§7.2）', () => {
+      rejectsDefinition('monthlyTotal');
+      rejectsDefinition('summarize: label');
+    });
+
+    it('宣言部が無いものも書けない', () => {
+      rejectsDefinition('^ 3');
+      rejectsDefinition('| total |', '^ total');
     });
   });
 });
