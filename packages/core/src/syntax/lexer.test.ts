@@ -95,24 +95,13 @@ describe('tokenize', () => {
     });
 
     it('キーワードの識別子と : の間に空白を置けない', () => {
-      expect(kinds('3 max : 4')).toEqual([
-        'integer:3',
-        'identifier:max',
-        'colon::',
-        'integer:4',
-      ]);
+      expect(kinds('3 max : 4')).toEqual(['integer:3', 'identifier:max', 'colon::', 'integer:4']);
     });
 
     it('二項セレクタは最長一致で 1〜2 文字', () => {
       expect(kinds('3 >= 3')).toEqual(['integer:3', 'binary:>=', 'integer:3']);
       expect(kinds('1 +++ 2')).toEqual(['integer:1', 'binary:++', 'binary:+', 'integer:2']);
-      expect(kinds('1 <==> 2')).toEqual([
-        'integer:1',
-        'binary:<=',
-        'binary:==',
-        'binary:>',
-        'integer:2',
-      ]);
+      expect(kinds('1 <==> 2')).toEqual(['integer:1', 'binary:<=', 'binary:=>', 'integer:2']);
     });
 
     it('| は二項セレクタとして切り出し、役割は構文上の位置に委ねる', () => {
@@ -237,12 +226,7 @@ describe('tokenize', () => {
 
   describe('§2.4 リテラル配列', () => {
     it('#( で始まり ) で終わる', () => {
-      expect(kinds('#(1 2)')).toEqual([
-        'arrayStart:#(',
-        'integer:1',
-        'integer:2',
-        'rightParen:)',
-      ]);
+      expect(kinds('#(1 2)')).toEqual(['arrayStart:#(', 'integer:1', 'integer:2', 'rightParen:)']);
       expect(kinds('#()')).toEqual(['arrayStart:#(', 'rightParen:)']);
     });
 
@@ -297,12 +281,7 @@ describe('tokenize', () => {
     });
 
     it('最長一致で切り出すので、範囲の範囲にはならない', () => {
-      expect(kinds('A1..B2..C3')).toEqual([
-        'range:A1..B2',
-        'period:.',
-        'period:.',
-        'cell:C3',
-      ]);
+      expect(kinds('A1..B2..C3')).toEqual(['range:A1..B2', 'period:.', 'period:.', 'cell:C3']);
     });
 
     it('正準形は通常のメッセージ式のまま', () => {
@@ -349,8 +328,8 @@ describe('tokenize', () => {
     it('複数行の文字列を跨いだ後も行を数え続ける', () => {
       expect(tokenize("'a\nb' + 1").map((t) => [t.line, t.column])).toEqual([
         [1, 1],
-        [2, 3],
-        [2, 5],
+        [2, 4],
+        [2, 6],
       ]);
     });
 
