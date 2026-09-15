@@ -333,6 +333,18 @@ describe('tokenize', () => {
       ]);
     });
 
+    it('文字列やコメントの中のサロゲートペアを 1 列と数える', () => {
+      expect(tokenize("'😀' + 1").map((t) => [t.line, t.column])).toEqual([
+        [1, 1],
+        [1, 5],
+        [1, 7],
+      ]);
+      expect(tokenize('"😀" + 1').map((t) => [t.line, t.column])).toEqual([
+        [1, 5],
+        [1, 7],
+      ]);
+    });
+
     it('字句エラーの位置は問題の始まりを指す', () => {
       const error = errorFrom("1\n2 + 'abc");
       expect(error.line).toBe(2);
