@@ -56,13 +56,23 @@ describe('エラー種別', () => {
 });
 
 describe('ファイルの割り当て', () => {
-  /** README の割り当て表に現れるフィクスチャ名。 */
-  const listedNames = () =>
-    new Set(
-      read('tests', 'golden', 'README.md')
-        .match(/`([a-z]+\.txt)`/g)
-        ?.map((t) => t.slice(1, -1)) ?? [],
+  /**
+   * README の**割り当て表の中に**現れるフィクスチャ名。
+   *
+   * 文書全体から拾うと、表から漏れていても説明文にファイル名が出てくるだけで
+   * 検査を通ってしまう。見出しから次の見出しまでを切り出して、その範囲だけを見る。
+   */
+  const listedNames = () => {
+    const readme = read('tests', 'golden', 'README.md');
+    const start = readme.indexOf('## ファイルの割り当て');
+    expect(start, 'README に「## ファイルの割り当て」の見出しが見つかりません。').toBeGreaterThan(
+      -1,
     );
+    const rest = readme.slice(start + 1);
+    const end = rest.indexOf('\n## ');
+    const section = end === -1 ? rest : rest.slice(0, end);
+    return new Set(section.match(/`([a-z]+\.txt)`/g)?.map((name) => name.slice(1, -1)) ?? []);
+  };
 
   it('README がフィクスチャを 1 つ以上挙げている', () => {
     expect(listedNames().size).toBeGreaterThan(0);
