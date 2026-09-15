@@ -43,6 +43,16 @@
  * ^ a + 1
  * => 4
  * ```
+ *
+ * `!macro` にメッセージを添えると、原文をマクロ定義（宣言部付き）として読み、
+ * そのメッセージを送って評価する。
+ *
+ * ```text
+ * !macro from: 1 to: 3
+ * from: start to: end
+ *     ^ start + end
+ * => 4
+ * ```
  */
 
 /**
@@ -57,6 +67,11 @@ export interface GoldenCase {
   readonly source: string;
   /** 原文をどう読むか。`!macro` ディレクティブの無いケースは数式（ADR-0018）。 */
   readonly kind: GoldenKind;
+  /**
+   * マクロ定義を起動するメッセージ（`!macro from: 1 to: 3` の `from: 1 to: 3`）。
+   * `null` なら原文は宣言部を持たない本体で、そのまま実行する（仕様書 §7.1）。
+   */
+  readonly send: string | null;
   /**
    * 式を評価するときのシートの状態。セル参照から、そのセルに入っている内容への対応。
    * 内容は原文テキストで、`=` で始まれば数式（要件 F-5-1）。
@@ -80,12 +95,14 @@ export class GoldenParseError extends Error {
   }
 }
 
+/**
+ * 評価器に渡す入力。**期待値と行番号は渡さない。**
+ * 評価に関係しないうえ、評価器が期待値を覗ける形にしたくない。
+ */
+export type GoldenInput = Pick<GoldenCase, 'source' | 'sheet' | 'kind' | 'send'>;
+
 /** 式を評価し、期待値と比較できる表記に変換する関数。 */
-export type GoldenEvaluator = (
-  source: string,
-  sheet: ReadonlyMap<string, string>,
-  kind: GoldenKind,
-) => string;
+export type GoldenEvaluator = (input: GoldenInput) => string;
 
 /** 期待どおりにならなかったケース。 */
 export interface GoldenFailure {
@@ -105,6 +122,15 @@ const DIRECTIVE_SEPARATOR = ':=';
 
 /** 原文をマクロとして読ませるディレクティブ（ADR-0018）。 */
 const MACRO_DIRECTIVE = '!macro';
+
+/**
+ * `!macro` か `!macro <送信>` の行か。
+ * `!macros` のように続きが語の一部になっているものは含めない。
+ */
+const isMacroDirective = (text: string): boolean => {
+  const trimmed = text.trim();
+  return trimmed === MACRO_DIRECTIVE || trimmed.startsWith(`${MACRO_DIRECTIVE} `);
+};
 
 /** ADR-0007 D-2 のセル参照の形。`!` は二項セレクタの文字ではないので、式と衝突しない。 */
 const CELL_REFERENCE = /^[A-Z]+[0-9]+$/;
@@ -192,14 +218,16 @@ function parseBlock(block: readonly SourceLine[], fileName: string): GoldenCase 
   let bodyStart = 0;
 
   // ケースの最初の行にだけ置ける。位置を 1 箇所に固定して、同じことの書き方を増やさない。
-  const kind: GoldenKind = head.text.trim() === MACRO_DIRECTIVE ? 'macro' : 'formula';
+  const kind: GoldenKind = isMacroDirective(head.text) ? 'macro' : 'formula';
+  const send =
+    kind === 'macro' ? head.text.trim().slice(MACRO_DIRECTIVE.length).trim() || null : null;
   if (kind === 'macro') bodyStart = 1;
 
   for (; bodyStart < block.length; bodyStart += 1) {
     const line = block[bodyStart];
     if (line === undefined || !line.text.trimStart().startsWith(DIRECTIVE_PREFIX)) break;
 
-    if (line.text.trim() === MACRO_DIRECTIVE) {
+    if (isMacroDirective(line.text)) {
       throw new GoldenParseError(
         `${fileName}:${line.no}: "${MACRO_DIRECTIVE}" はケースの最初の行に書いてください。`,
         line.no,
@@ -261,7 +289,7 @@ function parseBlock(block: readonly SourceLine[], fileName: string): GoldenCase 
     throw new GoldenParseError(`${fileName}:${expectLine.no}: 期待値が空です。`, expectLine.no);
   }
 
-  return { source, kind, expected, line: first.no, sheet };
+  return { source, kind, send, expected, line: first.no, sheet };
 }
 
 /**
@@ -277,7 +305,8 @@ export function runGoldenCases(
   for (const testCase of cases) {
     let actual: string;
     try {
-      actual = evaluate(testCase.source, testCase.sheet, testCase.kind);
+      const { source, sheet, kind, send } = testCase;
+      actual = evaluate({ source, sheet, kind, send });
     } catch (error) {
       failures.push({
         testCase,
