@@ -58,7 +58,11 @@ describe('エラー種別', () => {
 describe('ファイルの割り当て', () => {
   /** README の割り当て表に現れるフィクスチャ名。 */
   const listedNames = () =>
-    new Set(read('tests', 'golden', 'README.md').match(/`([a-z]+\.txt)`/g)?.map((t) => t.slice(1, -1)) ?? []);
+    new Set(
+      read('tests', 'golden', 'README.md')
+        .match(/`([a-z]+\.txt)`/g)
+        ?.map((t) => t.slice(1, -1)) ?? [],
+    );
 
   it('README がフィクスチャを 1 つ以上挙げている', () => {
     expect(listedNames().size).toBeGreaterThan(0);
