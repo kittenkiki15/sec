@@ -1,12 +1,15 @@
 export { evaluateFormula, NotImplementedError } from './evaluate.ts';
 export type {
   ArrayValue,
+  BlockValue,
   BooleanValue,
   DecimalValue,
   ErrorKind,
   ErrorValue,
   IntegerValue,
   NilValue,
+  NumberValue,
+  ReceivedValue,
   StringValue,
   SymbolValue,
   Value,

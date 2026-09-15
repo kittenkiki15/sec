@@ -1,8 +1,11 @@
 /**
  * 評価器。構文解析器が組んだ AST を値にする。
  *
- * **段階 1 はリテラルだけを扱う**（[#25](https://github.com/kittenkiki15/sec/issues/25)）。
- * メッセージ送信・ブロック・セル参照はまだ評価できず、例外になる。
+ * **ここが決めるのは評価の順序**（仕様書 §3.6）で、受け手 → 引数を左から右 → 送信。
+ * すべての引数は送信の前に評価される（先行評価）。**遅延評価はブロックで表す**（要件 F-2-9）。
+ * 1 回の送信の中でどう検査するかは `send.ts` が引き受ける。
+ *
+ * **セル参照とマクロはまだ評価できず、例外になる**（段階 3 以降）。
  * ゴールデンテストの側はそれらのケースに `!pending` の印を付けてある（ADR-0019）。
  *
  * **エラーは値として返し、例外にしない**（要件 F-8-1）。例外にすると評価の途中で制御が飛び、
@@ -11,8 +14,15 @@
  */
 
 import { LexicalError } from '../syntax/lexer.ts';
-import { type Expression, type LiteralNode, ParseError, parseFormula } from '../syntax/parser.ts';
-import type { Value } from './value.ts';
+import {
+  type Expression,
+  type LiteralNode,
+  ParseError,
+  parseFormula,
+  type SendNode,
+} from '../syntax/parser.ts';
+import { sendMessage } from './send.ts';
+import type { BlockValue, ReceivedValue, Value } from './value.ts';
 
 /** まだ評価できないノードに当たったことを表す。**仕様上のエラーではない。** */
 export class NotImplementedError extends Error {
@@ -76,13 +86,58 @@ function evaluate(node: Expression | LiteralNode): Value {
     // そのまま値にする（ADR-0013）。構文エラーではないので #Syntax ではない。
     case 'error':
       return { kind: 'error', error: node.error };
-    case 'send':
-      throw new NotImplementedError('メッセージ送信');
+    // **ブロックは作るだけでは本体を評価しない**（§5.1）。木のまま値に載せ、
+    // `value` を送られたときに `invokeBlock` が評価する。
     case 'block':
-      throw new NotImplementedError('ブロック');
+      return { kind: 'block', parameters: node.parameters, body: node };
+    case 'send':
+      return evaluateSend(node);
     case 'cell':
       throw new NotImplementedError('セル参照');
     case 'identifier':
       throw new NotImplementedError('識別子');
   }
+}
+
+/**
+ * §3.6 の評価順序をそのまま書いたもの。**受け手 → 引数を左から右 → 送信。**
+ *
+ * **最初に生じたエラーがその式全体の値になり、それ以降は評価しない**（§6.0、ADR-0011）。
+ * エラーの種別に強弱は無く、決めるのは順序だけである。打ち切りをここに集めてあるので、
+ * **エラーが受け手や引数として送信まで届くことはない**（`ReceivedValue` がそれを表す）。
+ */
+function evaluateSend(node: SendNode): Value {
+  const receiver = evaluate(node.receiver);
+  if (receiver.kind === 'error') return receiver;
+
+  const args: ReceivedValue[] = [];
+  for (const argument of node.arguments) {
+    const value = evaluate(argument);
+    if (value.kind === 'error') return value;
+    args.push(value);
+  }
+
+  return sendMessage(receiver, node.selector, args, invokeBlock);
+}
+
+/**
+ * ブロックの本体を評価する。**数式のブロックの本体は式ちょうど 1 つ**（§5.1）。
+ * 代入が書けない以上、一時変数を宣言しても使い道が無く、文を並べる意味も無いためである。
+ *
+ * 文の列と一時変数を持てるのはマクロのブロックで（§7.5）、`parseFormula` はそれを弾く。
+ * **弾かれた形がここへ来ることはないが、木の型は両方を許す**ので、来たときは
+ * 未実装として扱う。黙って別の値を返さないのはリテラル以外のノードと同じ理由。
+ */
+function invokeBlock(block: BlockValue): Value {
+  const [statement] = block.body.statements;
+  if (
+    statement === undefined ||
+    block.body.statements.length !== 1 ||
+    block.body.temporaries.length > 0 ||
+    statement.kind === 'assign' ||
+    statement.kind === 'return'
+  ) {
+    throw new NotImplementedError('マクロのブロック');
+  }
+  return evaluate(statement);
 }
