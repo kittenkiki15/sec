@@ -4,6 +4,53 @@
 "マクロのケースは最初の行に !macro を置く（ADR-0018）。無いケースは数式として読む。
 "数式とマクロは開始記号が違うので、同じ原文でも結果が変わる。
 
+"--- マクロの宣言（§7.1） ---
+
+"宣言部を持つマクロは、!macro に起動するメッセージを添えて評価する（ADR-0018）
+!macro monthlyTotal
+monthlyTotal
+    | total |
+    total := 3.
+    ^ total
+=> 3
+
+"キーワードパターンは引数を取る。引数は本体の中で識別子として読める
+!macro from: 1 to: 3
+from: start to: end
+    ^ start + end
+=> 4
+
+"引数はセルへの書き込みにも使える
+!macro summarize: 'Q1'
+summarize: label
+    A14 := label.
+    ^ A14
+=> 'Q1'
+
+"引数への代入は書けない。書き換えたければ一時変数を宣言して写す（§7.3）
+!macro double: 2
+double: n
+    n := n * 2.
+    ^ n
+=> #Syntax
+
+"二項セレクタのパターンは認めない。マクロの名前に記号は使わない
+!macro + 1
++ other
+    ^ other
+=> #Syntax
+
+"宣言部だけで本体が無いものは書けない（§7.2）
+!macro monthlyTotal
+monthlyTotal
+=> #Syntax
+
+"パターンと違うセレクタを送れば理解しない
+!macro yearlyTotal
+monthlyTotal
+    ^ 1
+=> #DoesNotUnderstand
+
 "--- 本体は文の列 ---
 
 "^ で値を返す
@@ -252,4 +299,8 @@ i := 0.
 i := 0.
 [true] whileTrue: [i := i + 1].
 ^ i
+=> #Timeout
+
+"上限は数式にも当たる。代入が書けなくても、停止しない繰り返しは数式で書ける
+[true] whileTrue: [1]
 => #Timeout
