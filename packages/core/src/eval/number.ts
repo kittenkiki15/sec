@@ -90,6 +90,25 @@ const isZero = (value: NumberValue): boolean =>
   value.kind === 'integer' ? value.value === 0n : value.value === 0;
 
 /**
+ * 小数として求めた商と、変換後の被演算子。**商が表せなければ `null`。**
+ *
+ * `/` `//` `\\` の 3 つが同じ商を経由する。**`\\` が `//` と同じ条件で `#Overflow` に
+ * なるのはこのため**で（§6.1）、`self = (self // n) * n + (self \\ n)` を保つには
+ * 剰余も商から求めるほかない。
+ */
+function decimalDivision(
+  receiver: NumberValue,
+  argument: NumberValue,
+): { readonly a: number; readonly b: number; readonly quotient: number } | null {
+  const a = widen(receiver);
+  const b = widen(argument);
+  if (a === null || b === null) return null;
+
+  const quotient = a / b;
+  return Number.isFinite(quotient) ? { a, b, quotient } : null;
+}
+
+/**
  * `/`。**整数を返すのは両方が整数で、かつ割り切れるときだけ**（§6.1）。
  * 片方でも小数なら、割り切れても小数になる。
  */
@@ -104,11 +123,85 @@ export function divide(receiver: NumberValue, argument: NumberValue): Value {
     }
   }
 
-  const a = widen(receiver);
-  const b = widen(argument);
-  if (a === null || b === null) return OVERFLOW;
-  return decimalResult(a / b);
+  const division = decimalDivision(receiver, argument);
+  return division === null ? OVERFLOW : { kind: 'decimal', value: division.quotient };
 }
+
+/**
+ * 床除算の商。**負の無限大の側へ丸める**（Smalltalk-80）。
+ * bigint の `/` は 0 の側へ丸めるので、割り切れず符号が違うときだけ 1 つ下へ送る。
+ */
+function floorDivideIntegers(a: bigint, b: bigint): bigint {
+  const quotient = a / b;
+  return a % b !== 0n && a < 0n !== b < 0n ? quotient - 1n : quotient;
+}
+
+/**
+ * `//`。**返り値は常に整数**（§6.1）。
+ *
+ * **整数どうしなら整数演算のままなので範囲の制限が無い。** 小数が混ざる場合は
+ * 商を小数で求めてから床を取るので、そこで超えれば `#Overflow` になる。
+ */
+export function floorDivide(receiver: NumberValue, argument: NumberValue): Value {
+  if (isZero(argument)) return DIVIDE_BY_ZERO;
+
+  if (receiver.kind === 'integer' && argument.kind === 'integer') {
+    return { kind: 'integer', value: floorDivideIntegers(receiver.value, argument.value) };
+  }
+
+  const division = decimalDivision(receiver, argument);
+  if (division === null) return OVERFLOW;
+  return { kind: 'integer', value: BigInt(Math.floor(division.quotient)) };
+}
+
+/**
+ * `\\`。**符号は除数に合わせる**（§6.1）。`//` と対になり、
+ * `self = (self // n) * n + (self \\ n)` が常に成り立つ。
+ *
+ * **整数を返すのは `//` だけで、こちらは小数を返しうる**（`7.5 \\ 2` → `1.5`）。
+ */
+export function modulo(receiver: NumberValue, argument: NumberValue): Value {
+  if (isZero(argument)) return DIVIDE_BY_ZERO;
+
+  if (receiver.kind === 'integer' && argument.kind === 'integer') {
+    // bigint の `%` は受け手に符号を合わせるので、除数と食い違うときだけ寄せ直す。
+    const remainder = receiver.value % argument.value;
+    const matchesDivisor = remainder === 0n || remainder < 0n === argument.value < 0n;
+    return { kind: 'integer', value: matchesDivisor ? remainder : remainder + argument.value };
+  }
+
+  const division = decimalDivision(receiver, argument);
+  if (division === null) return OVERFLOW;
+  return decimalResult(division.a - Math.floor(division.quotient) * division.b);
+}
+
+/**
+ * `sqrt`。**常に小数を返す**（`4 sqrt` も `2.0`）。一般に無理数になるため。
+ *
+ * **受け手を小数へ変換するのが先**なので、`1e400 sqrt` は結果の `1e200` が表せても
+ * `#Overflow` になる。負の数の平方根は実数の範囲に無いので、これも `#Overflow`（ADR-0013）。
+ */
+export function squareRoot(value: NumberValue): Value {
+  const widened = widen(value);
+  if (widened === null || widened < 0) return OVERFLOW;
+  return decimalResult(Math.sqrt(widened));
+}
+
+/**
+ * `rounded` / `truncated` の共通部分。**どちらも常に整数を返す**（§6.1）。
+ * 整数に送っても整数のままなので、そのとき丸めは要らない。
+ */
+const toInteger = (value: NumberValue, rule: (value: number) => number): NumberValue =>
+  value.kind === 'integer' ? value : { kind: 'integer', value: BigInt(rule(value.value)) };
+
+/**
+ * **端数がちょうど半分なら大きい側へ**丸める（Smalltalk-80 の `rounded`）。
+ * `-2.5 rounded` は `-3` ではなく `-2`。`Math.round` が同じ規則で丸める。
+ */
+export const round = (value: NumberValue): NumberValue => toInteger(value, Math.round);
+
+/** **0 の側へ落とす。** `-3.7 truncated` は `-4` ではなく `-3`。 */
+export const truncate = (value: NumberValue): NumberValue => toInteger(value, Math.trunc);
 
 export const absoluteValue = (value: NumberValue): NumberValue =>
   value.kind === 'integer'

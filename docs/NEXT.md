@@ -20,9 +20,11 @@
 - **M2（評価器 + CLI）に着手。段階 0（フィクスチャの分割）**
   （[#23](https://github.com/kittenkiki15/sec/issues/23)）**・段階 1（値の表記とリテラル）**
   （[#25](https://github.com/kittenkiki15/sec/issues/25)）**・段階 2（送信の骨格と
-  エラーの伝播順序）**（[#28](https://github.com/kittenkiki15/sec/issues/28)）**が終わった。**
-  **メッセージが送れるようになり、4 ファイル 123 件が緑**（`literals` 61 / `messages` 26 /
-  `precedence` 16 / `errors` 20）。**次は段階 3（`Number` のセレクタ）**
+  エラーの伝播順序）**（[#28](https://github.com/kittenkiki15/sec/issues/28)）**・段階 3
+  （`Number` のセレクタ）**（[#30](https://github.com/kittenkiki15/sec/issues/30)）**が終わった。**
+  **仕様書 §6.1 を閉じ、5 ファイル 248 件が緑**（`literals` 61 / `messages` 26 /
+  `precedence` 16 / `errors` 20 / `numbers` 125）。**次は段階 4（`String` / `Boolean` /
+  `Symbol` / `nil`）**
 
 ## M0 の記録
 
@@ -190,8 +192,8 @@ M2 の完了条件は「**セル参照なしの式**が評価できる」（要�
 | 0 | フィクスチャの分割とハーネス | — | **済**（[#23](https://github.com/kittenkiki15/sec/issues/23)） |
 | 1 | 値の表現と表記（§0.3）、リテラルの評価 | `literals.txt` (45) | **済**（[#25](https://github.com/kittenkiki15/sec/issues/25)） |
 | 2 | 送信の骨格とエラーの伝播順序（§3.6 / §6.0） | `messages.txt` (26) / `precedence.txt` (16) / `errors.txt` (20) + `literals.txt` の残り 16 | **済**（[#28](https://github.com/kittenkiki15/sec/issues/28)） |
-| 3 | `Number` のセレクタ（§6.1） | `numbers.txt` (125) | 次 |
-| 4 | `String` / `Boolean` / `Symbol` / `nil`（§6.2） | `strings.txt` (66) / `booleans.txt` (49) | |
+| 3 | `Number` のセレクタ（§6.1） | `numbers.txt` (125) | **済**（[#30](https://github.com/kittenkiki15/sec/issues/30)） |
+| 4 | `String` / `Boolean` / `Symbol` / `nil`（§6.2） | `strings.txt` (66) / `booleans.txt` (49) | 次 |
 | 5 | ブロックと条件式（§5） | `blocks.txt` (23) / `conditionals.txt` (32) | |
 | 6 | `Array` / `Interval`（§6.3） | `collections.txt` (109) | |
 | 7 | CLI（`sec eval`） | — | |
@@ -238,13 +240,31 @@ M2 の完了条件は「**セル参照なしの式**が評価できる」（要�
   `COVERED` を段階ごとに増やす運用の側で、緑にしたファイルの中に未実装のセレクタが
   残っていれば期待値と食い違って落ちる
 
+### 段階 3 で決めたこと
+
+**新しい論点は出ていない。** §6.1 が既に定めていた規則をそのまま実装した。
+
+- **`/` `//` `\\` は同じ商を経由する**（`decimalDivision`）。仕様が
+  `self = (self // n) * n + (self \\ n)` を保つとしている以上、**剰余も商から求めるほかない。**
+  `\\` が `//` と同じ条件で `#Overflow` になるのはその帰結で、別の規則ではない
+- **`//` は整数を返すが範囲の制限を免れない。** 整数どうしなら整数演算のままなので
+  上限が無く、小数が混ざれば商を小数で求めてから床を取るので、そこで超える
+- **`sqrt` は受け手の変換が演算より先。** `1e400 sqrt` は結果の `1e200` が表せても `#Overflow`
+- **`rounded` は `Math.round` と同じ規則**（端数ちょうど半分は大きい側へ）。
+  `-2.5 rounded` が `-2` になるのは Smalltalk-80 と一致する
+
+**段階 2 の「持たせていないセレクタは `#DoesNotUnderstand` になる」が実地で検証された。**
+`numbers.txt` を対象に足した時点の失敗 38 件は**すべて未実装のセレクタ**で、
+期待値と食い違って落ちた。**未実装が緑として紛れ込んだケースは無い。**
+
 ### ゴールデンテストの実行
 
 `tests/golden/evaluate.test.mjs` が実行する。**対象のファイルは段階ごとに増やす**
 （`COVERED` に足す）。全ファイルを一度に対象にすると赤が既定の状態になる（ADR-0019 の背景）。
 
 現在の対象は `literals.txt` (61) / `messages.txt` (26) / `precedence.txt` (16) /
-`errors.txt` (20) の **123 件**。`errors.txt` の残り 9 件はセル参照が要るので `!pending m3`。
+`errors.txt` (20) / `numbers.txt` (125) の **248 件**。
+`errors.txt` の残り 9 件はセル参照が要るので `!pending m3`。
 
 **印の外し忘れはハーネスが赤にして知らせる。** 段階 2 では `literals.txt` の `!pending m2`
 16 件に加えて、`errors.txt` の `(1 / 0) + A0` の印が実際にそれで見つかった
