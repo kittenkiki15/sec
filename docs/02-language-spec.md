@@ -1674,7 +1674,13 @@ macro block = "[" , [ block arguments ] , [ temporaries ] , statements , "]" ;
 ```smalltalk
 [:x | | t | t := x * 2. t + 1] value: 3   "→ 7"
 [1. 2. 3] value                           "→ 3。ブロックの値は最後の文の値"
-[a := 1] value                            "→ nil。代入は値を持たない（§7.3）"
+```
+
+**外側の一時変数への代入も文なので、値を持たない。**
+
+```smalltalk
+| a |
+^ [a := 1] value    "→ nil。a は外側で宣言してある（§7.3）"
 ```
 
 - **ブロックの値は最後の文の値。** 最後が代入なら `nil`。
