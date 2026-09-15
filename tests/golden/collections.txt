@@ -201,6 +201,62 @@ A1..A3 collect: [:c | c * 2]
 A1..B2 collect: [:c | c value]
 => #(1 2 3 4)
 
+"collect: 以外の列挙も Cell を渡す（ADR-0015）。
+"ブロックの中で value を送れることが、値を渡す実装との違いになる
+!A1 := 1
+!A2 := 2
+!A3 := 3
+A1..A3 select: [:c | c value > 1]
+=> #(2 3)
+
+"選び出した結果の要素も Cell のまま
+!A1 := 1
+!A2 := 2
+!A3 := 3
+(A1..A3 select: [:c | c value > 1]) first value
+=> 2
+
+!A1 := 1
+!A2 := 2
+!A3 := 3
+A1..A3 reject: [:c | c value > 1]
+=> #(1)
+
+"detect:ifNone: が返すのも Cell
+!A1 := 1
+!A2 := 2
+!A3 := 3
+(A1..A3 detect: [:c | c value > 1] ifNone: [0]) value
+=> 2
+
+"見つからなければ ifNone: を評価した値。こちらは Cell ではない
+!A1 := 1
+!A2 := 2
+!A3 := 3
+A1..A3 detect: [:c | c value > 9] ifNone: [0]
+=> 0
+
+"inject:into: のブロックは累積値と Cell を受け取る
+!A1 := 1
+!A2 := 2
+!A3 := 3
+A1..A3 inject: 0 into: [:acc :c | acc + c value]
+=> 6
+
+"sorted: の比較ブロックにも Cell が渡る
+!A1 := 1
+!A2 := 2
+!A3 := 3
+A1..A3 sorted: [:a :b | a value > b value]
+=> #(3 2 1)
+
+"委譲が働くので value を省いても書ける（§4.2 の規則 2）
+!A1 := 1
+!A2 := 2
+!A3 := 3
+A1..A3 select: [:c | c > 1]
+=> #(2 3)
+
 "at: も Cell を返す。単項はキーワードより強い（§3.5）ので、
 "at: の結果に value を送るには括弧が要る
 !A1 := 10
