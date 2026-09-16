@@ -398,6 +398,19 @@ describe('evaluateFormula のブロックの引数（§5.1）', () => {
   it('条件式が評価するブロックにも引数の数の検査が当たる', () => {
     expect(evaluated('true ifTrue: [:x | x]')).toBe('#TypeError');
     expect(evaluated('nil ifNil: [:x | x]')).toBe('#TypeError');
+    expect(evaluated('true ifTrue: [:x | x] ifFalse: [2]')).toBe('#TypeError');
+  });
+
+  // 引数の型（ブロックかどうか）は引数そのものの性質で、評価せずに見えるので常に検査する。
+  // 引数の数が合うかは、ブロックを評価するときに初めて問題になる（§5.2）。
+  it('選ばれなかった側は引数の数を検査しない', () => {
+    expect(evaluated('false ifTrue: [:x | x]')).toBe('nil');
+    expect(evaluated('true ifFalse: [:x | x]')).toBe('nil');
+    expect(evaluated('true ifTrue: [1] ifFalse: [:x | x]')).toBe('1');
+    expect(evaluated('false and: [:x | x]')).toBe('false');
+    expect(evaluated('1 ifNil: [:x | x]')).toBe('1');
+    // 型の方は短絡しても検査する。
+    expect(evaluated('false and: 1')).toBe('#TypeError');
   });
 
   it('引数は送信の前に評価され、エラーならブロックは評価されない（§3.6）', () => {

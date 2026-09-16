@@ -129,6 +129,24 @@ true ifTrue: 1
 true ifTrue: [1] ifFalse: 2
 => #TypeError
 
+"--- 引数のブロックは引数を取らない ---
+
+"条件式はブロックを引数なしで評価するので、§5.1 の「引数の数が合わなければ #TypeError」が
+"そのまま当たる。value: の送信に限った規則にすると、同じブロックが送り方で別の意味を持つ
+true ifTrue: [:x | x]
+=> #TypeError
+
+"選ばれなければ検査もされない。引数の型と違い、引数の数はブロックを評価するときに
+"初めて問題になる。§5.2 の「選ばれなかった側は評価されない」がそのまま効く
+false ifTrue: [:x | x]
+=> nil
+
+false and: [:x | x]
+=> false
+
+nil ifNil: [:x | x]
+=> #TypeError
+
 "--- 受け手が真偽値でない ---
 
 3 ifTrue: [1]

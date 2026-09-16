@@ -3,7 +3,7 @@
 セッションをまたいでも作業を再開できるように、現在地と次にやることを書く。
 **セッションの終わりに更新する**（`docs/00-development-policy.md`）。
 
-最終更新: 2026-09-15
+最終更新: 2026-09-16
 
 ## 現在地
 
@@ -22,10 +22,12 @@
   （[#25](https://github.com/kittenkiki15/sec/issues/25)）**・段階 2（送信の骨格と
   エラーの伝播順序）**（[#28](https://github.com/kittenkiki15/sec/issues/28)）**・段階 3
   （`Number` のセレクタ）**（[#30](https://github.com/kittenkiki15/sec/issues/30)）**・段階 4（`String` / `Boolean` /
-  `Symbol` / `nil`）**（[#32](https://github.com/kittenkiki15/sec/issues/32)）**が終わった。**
-  **仕様書 §6.1 と §6.2 を閉じ、7 ファイル 364 件が緑**（`literals` 61 / `messages` 26 /
-  `precedence` 16 / `errors` 20 / `numbers` 125 / `strings` 67 / `booleans` 49）。
-  **次は段階 5（ブロックと条件式）**
+  `Symbol` / `nil`）**（[#32](https://github.com/kittenkiki15/sec/issues/32)）**・
+  段階 5（ブロックと条件式）**（[#34](https://github.com/kittenkiki15/sec/issues/34)）**が終わった。**
+  **仕様書 §5 と §6.1・§6.2 を閉じ、9 ファイル 423 件が緑**（`literals` 61 / `messages` 26 /
+  `precedence` 16 / `errors` 20 / `numbers` 125 / `strings` 67 / `booleans` 49 /
+  `blocks` 23 / `conditionals` 36）。
+  **次は段階 6（`Array` / `Interval`、§6.3）**
 
 ## M0 の記録
 
@@ -170,17 +172,18 @@ CLAUDE.md の「組み込みセレクタを追加・変更したら対応する�
 ### フィクスチャの分割（段階 0 で決めた）
 
 M2 の完了条件は「**セル参照なしの式**が評価できる」（要件定義書 §8）。
-セル参照は M3、マクロは M4 なので、**713 件のうち 165 件は M2 では緑にならない。**
+セル参照は M3、マクロは M4 なので、**717 件のうち 165 件は M2 では緑にならない。**
 
 | 区分 | 件数 |
 | --- | --- |
-| M2 で緑にする | 548 |
+| M2 で緑にする | 552 |
 | M3 待ち（`!pending m3`） | 105 |
 | M4 待ち（`!pending m4`） | 60 |
 
 段階 0 の時点では 546 / 106 で、総数は 712 件だった。段階 2 で `errors.txt` の 1 件が
 **セル参照に到達しないまま緑になる**ことが分かり、M2 の側へ移った。段階 4 で
-`strings.txt` に 1 件足した（`'1.0e400' asNumber`）。
+`strings.txt` に 1 件足し（`'1.0e400' asNumber`）、段階 5 で `conditionals.txt` に
+4 件足した（引数の数の検査が及ぶ範囲）。
 
 **保留は `!pending <マイルストーン>` の印でケースごとに表す**
 （[ADR-0019](adr/0019-golden-pending-directive.md)）。`collections.txt` が 109 / 46 で
@@ -196,8 +199,8 @@ M2 の完了条件は「**セル参照なしの式**が評価できる」（要�
 | 2 | 送信の骨格とエラーの伝播順序（§3.6 / §6.0） | `messages.txt` (26) / `precedence.txt` (16) / `errors.txt` (20) + `literals.txt` の残り 16 | **済**（[#28](https://github.com/kittenkiki15/sec/issues/28)） |
 | 3 | `Number` のセレクタ（§6.1） | `numbers.txt` (125) | **済**（[#30](https://github.com/kittenkiki15/sec/issues/30)） |
 | 4 | `String` / `Boolean` / `Symbol` / `nil`（§6.2） | `strings.txt` (67) / `booleans.txt` (49) | **済**（[#32](https://github.com/kittenkiki15/sec/issues/32)） |
-| 5 | ブロックと条件式（§5） | `blocks.txt` (23) / `conditionals.txt` (32) | 次 |
-| 6 | `Array` / `Interval`（§6.3） | `collections.txt` (109) | |
+| 5 | ブロックと条件式（§5） | `blocks.txt` (23) / `conditionals.txt` (36) | **済**（[#34](https://github.com/kittenkiki15/sec/issues/34)） |
+| 6 | `Array` / `Interval`（§6.3） | `collections.txt` (109) | 次 |
 | 7 | CLI（`sec eval`） | — | |
 
 括弧内は M2 で緑にする件数。**段階 1 でゴールデンテストの実行そのものを立ち上げた。**
@@ -288,14 +291,50 @@ M2 の完了条件は「**セル参照なしの式**が評価できる」（要�
   §6.2 の表は返り値を真偽値としているが、これは真偽値を返すブロックを渡す使い方を
   書いたもので、`true and: [1]` のような形は定めていない。**必要になったら決める**
 
+### 段階 5 で決めたこと
+
+**仕様書が書いていなかった 2 点を利用者に確認して決めた。** どちらも「§5.1 の規則が
+どこまで及ぶか」の話で、ADR は立てていない（新しい論点ではなく、既存の規則の適用範囲の明示）。
+**§5.2 と付録 A に書き、`conditionals.txt` にケースを 4 件足した**（32 → 36 件）。
+
+- **引数の数の検査は、ブロックを評価する経路すべてに当たる。** `true ifTrue: [:x | x]` は
+  `#TypeError`。§5.1 は「引数の数が合わなければ `#TypeError`」を `value` 系の送信について
+  書いているが、**`value:` の送信に限った規則にすると、同じブロックが送り方によって
+  別の意味を持つ**
+- **ただし選ばれなかった側は検査もされない。** `false ifTrue: [:x | x]` は `nil`。
+  **引数の型（ブロックかどうか）は引数そのものの性質で、評価せずに見えるので常に検査する**
+  （`false and: 1` は `#TypeError`）。**引数の数が合うかは、ブロックを評価するときに
+  初めて問題になる**
+
+**実装で決めたこと。**
+
+- **環境は平らな表 1 つにした**（`Environment = ReadonlyMap<string, ReceivedValue>`）。
+  外側と同じ名前を内側で宣言できない（§5.1、§7.5）ので**名前が衝突せず、内と外を分けて
+  持ってどちらを先に見るかを決める必要が無い。** 影を許す言語なら鎖が要るが、
+  この言語は構文解析器が影を弾いている
+- **ブロックは作られた時点の環境を捕まえる。** `[:x | [x + 1]] value: 2` の内側のブロックは、
+  外側の送信が終わった後に評価されても `x` を見られなければならない
+- **引数の数の検査を `invokeBlock` に置いた。** 条件式もブロックを引数なしで評価するので、
+  **送信の側それぞれに書くと足し忘れた 1 つが検査を抜ける**（段階 4 で `withBlock` に
+  型の検査を寄せたのと同じ理由）
+- **束縛されていない識別子は `NotImplementedError` のままにした。** §4.2 は `#Ref` と
+  定めているが、**それを返すのはセル参照が解決できるようになってから**でよい
+  （`references.txt` は M3 待ちで、段階 5 のフィクスチャには 1 件も現れない）。
+  先回りして足すと、段階 5 のどのケースも要求していない振る舞いが検査の外に増える
+- **`Array` の `ifEmpty:` は段階 6 を待たずに入れた。** §6.3 ではなく**条件式として
+  §5.2 の表にある**ためで、`conditionals.txt` が緑になる条件に入っている。
+  §6.3 の残りのセレクタは段階 6
+
 ### ゴールデンテストの実行
 
 `tests/golden/evaluate.test.mjs` が実行する。**対象のファイルは段階ごとに増やす**
 （`COVERED` に足す）。全ファイルを一度に対象にすると赤が既定の状態になる（ADR-0019 の背景）。
 
 現在の対象は `literals.txt` (61) / `messages.txt` (26) / `precedence.txt` (16) /
-`errors.txt` (20) / `numbers.txt` (125) / `strings.txt` (67) / `booleans.txt` (49) の
-**364 件**。`errors.txt` の残り 9 件はセル参照が要るので `!pending m3`。
+`errors.txt` (20) / `numbers.txt` (125) / `strings.txt` (67) / `booleans.txt` (49) /
+`blocks.txt` (23) / `conditionals.txt` (36) の **423 件**。
+`errors.txt` の残り 9 件、`blocks.txt` の 2 件、`conditionals.txt` の 3 件は
+セル参照が要るので `!pending m3`。
 **`strings.txt` と `booleans.txt` は保留のケースを 1 件も持たない**（どちらも全件が
 セル参照もマクロも使わない）。
 
