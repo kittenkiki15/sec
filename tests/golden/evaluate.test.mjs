@@ -33,6 +33,7 @@ const COVERED = [
   'booleans.txt',
   'blocks.txt',
   'conditionals.txt',
+  'collections.txt',
 ];
 
 /** ゴールデンテストの入力を評価器に渡す。マクロとシートはまだ無い。 */
