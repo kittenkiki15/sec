@@ -36,6 +36,25 @@ import {
   truncate,
 } from './number.ts';
 import {
+  at,
+  averageOf,
+  collectWith,
+  countOf,
+  detectWith,
+  filterWith,
+  firstOf,
+  injectWith,
+  isSequenceEqual,
+  lastOf,
+  makeInterval,
+  maxOf,
+  minOf,
+  type SequenceValue,
+  sequenceSize,
+  sortWith,
+  sumOf,
+} from './sequence.ts';
+import {
   characterCount,
   copyFrom,
   indexOfSubstring,
@@ -44,15 +63,12 @@ import {
   upperCase,
 } from './string.ts';
 import type {
-  ArrayValue,
   BlockValue,
   BooleanValue,
   ErrorValue,
-  NilValue,
   NumberValue,
   ReceivedValue,
   StringValue,
-  SymbolValue,
   Value,
 } from './value.ts';
 
@@ -75,23 +91,18 @@ const string = (value: string): Value => ({ kind: 'string', value });
 const integer = (value: bigint): Value => ({ kind: 'integer', value });
 
 /**
- * `=` と `~=` を持つクラスの受け手。**`Array` と `Interval` は §6.3（段階 6）で足す。**
- * 要素どうしの比較になり、ここの「同じクラスで同じ値か」では済まないため。
- * `Block` は `=` を定めていない（§5.1）ので、いつまでも入らない。
- */
-type EquatableValue = NumberValue | StringValue | SymbolValue | BooleanValue | NilValue;
-
-const isEquatable = (value: ReceivedValue): value is EquatableValue =>
-  value.kind !== 'array' && value.kind !== 'block';
-
-/**
- * 値として等しいか。**クラスが違えば等しくないだけで、誤りではない**（§6.1、§6.2）。
+ * 値として等しいか。**クラスが違えば等しくないだけで、誤りではない**（§6.1〜6.3）。
  *
  * **整数と小数をまたいで等しくなりうるのは数だけ**である（同じ「数」だから）。
  * **シンボルと文字列は綴りが同じでも等しくない。** クラスをまたいだ同一視は別の話で、
  * `#foo = 'foo'` と `'foo' = #foo` が食い違う実装があるが、その非対称は持ち込まない。
+ *
+ * **`Array` と `Interval` だけが要素で比べる**（§6.3）。そのため要素を受け取る形にしてあり、
+ * 要素にはエラー（`#(1.0e400)` のような表せないリテラル）もブロックも現れうる。
+ * どちらも `=` を持たないが、**`=` はエラーにならない**（§6.3 の表）ので、
+ * ここで等しいかどうかだけを答える。
  */
-function isEqual(receiver: EquatableValue, argument: ReceivedValue): boolean {
+function isEqual(receiver: Value, argument: Value): boolean {
   switch (receiver.kind) {
     case 'integer':
     case 'decimal':
@@ -104,6 +115,16 @@ function isEqual(receiver: EquatableValue, argument: ReceivedValue): boolean {
       return argument.kind === 'boolean' && argument.value === receiver.value;
     case 'nil':
       return argument.kind === 'nil';
+    case 'array':
+    case 'interval':
+      return argument.kind !== 'error' && isSequenceEqual(receiver, argument, isEqual);
+    // ブロックに `=` は無い（§5.1）。**受け手としては `sendToAny` が弾く**ので、
+    // ここへ来るのは配列の要素として比べられたときだけ。等しくないとみなす。
+    case 'block':
+      return false;
+    // エラーは受け手にならない（§6.0）。要素として比べられたときは種別で見る。
+    case 'error':
+      return argument.kind === 'error' && argument.error === receiver.error;
   }
 }
 
@@ -194,6 +215,10 @@ function sendToNumber(
         return withNumber(first, (argument) =>
           compareNumbers(receiver, argument) === -1 ? receiver : argument,
         );
+      // **数への `to:` は区間を作る**（ADR-0016）。セルへの `to:` が作る範囲（§4.3）とは
+      // 別のクラスで、逆向きの扱いも逆になる（区間は空、範囲は正規化）。
+      case 'to:':
+        return withNumber(first, (argument) => makeInterval(receiver, argument));
       default:
         return undefined;
     }
@@ -330,23 +355,80 @@ function sendToBlock(
 }
 
 /**
- * 配列のセレクタ。**持たせてあるのは `ifEmpty:` だけ**で、§6.3 の残りは段階 6 で足す。
- * ここに 1 つだけあるのは、`ifEmpty:` が §6.3 ではなく**条件式として §5.2 の表にある**ため。
- * 空になりうるものは `String`（§6.2）と `Array` / `Interval`（§6.3）である。
+ * 並びを持つ値のセレクタ（§6.3）。**`Array` と `Interval` は同じセレクタを理解する。**
+ * 違うのは要素の正体だけなので、振り分けも 1 つで足りる。**`Range` は M3 でここへ入る。**
+ *
+ * **演算は `sequence.ts` が持つ。** ここにあるのは引数の型の検査だけである。
  */
-function sendToArray(
-  receiver: ArrayValue,
+function sendToSequence(
+  receiver: SequenceValue,
   selector: string,
   args: readonly ReceivedValue[],
   invoke: InvokeBlock,
 ): Value | undefined {
-  // セレクタの綴りが引数の数を決めるので、`ifEmpty:` なら必ず 1 つ。
-  // 分割代入で受けているのは `noUncheckedIndexedAccess` の下で `undefined` を潰すため。
-  const [first] = args;
-  if (selector !== 'ifEmpty:' || first === undefined) return undefined;
-  return withBlock(first, (block) =>
-    receiver.elements.length === 0 ? invoke(block, []) : receiver,
-  );
+  const [first, second] = args;
+
+  if (first === undefined) {
+    switch (selector) {
+      case 'size':
+        return integer(sequenceSize(receiver));
+      case 'isEmpty':
+        return boolean(sequenceSize(receiver) === 0n);
+      // first / last は添字アクセスなので、空なら範囲外（集計の nil とは分ける、§6.3）。
+      case 'first':
+        return firstOf(receiver);
+      case 'last':
+        return lastOf(receiver);
+      case 'sum':
+        return sumOf(receiver);
+      case 'count':
+        return countOf(receiver);
+      case 'min':
+        return minOf(receiver);
+      case 'max':
+        return maxOf(receiver);
+      case 'average':
+        return averageOf(receiver);
+      default:
+        return undefined;
+    }
+  }
+
+  if (second === undefined) {
+    switch (selector) {
+      // **小数は添字になれない。** 型の誤りは範囲外より先に出る（§6.0 の検査の順序）。
+      case 'at:':
+        return withInteger(first, (index) => at(receiver, index));
+      case 'collect:':
+        return withBlock(first, (block) => collectWith(receiver, block, invoke));
+      case 'select:':
+        return withBlock(first, (block) => filterWith(receiver, block, invoke, true));
+      case 'reject:':
+        return withBlock(first, (block) => filterWith(receiver, block, invoke, false));
+      case 'sorted:':
+        return withBlock(first, (block) => sortWith(receiver, block, invoke));
+      // 空になりうるものは String（§6.2）と Array / Interval（§6.3）。Range は空にならない。
+      // ifEmpty: は §6.3 ではなく条件式として §5.2 の表にある。
+      case 'ifEmpty:':
+        return withBlock(first, (block) =>
+          sequenceSize(receiver) === 0n ? invoke(block, []) : receiver,
+        );
+      default:
+        return undefined;
+    }
+  }
+
+  // 引数の型は、評価されないときも検査する（§5.2 と同じ）。見つかれば ifNone: は評価しない。
+  if (selector === 'detect:ifNone:') {
+    return withBlock(first, (block) =>
+      withBlock(second, (none) => detectWith(receiver, block, none, invoke)),
+    );
+  }
+  // inject:into: の第 1 引数は初期値なので、型を選ばない。
+  if (selector === 'inject:into:') {
+    return withBlock(second, (block) => injectWith(receiver, first, block, invoke));
+  }
+  return undefined;
 }
 
 /**
@@ -381,7 +463,9 @@ function sendToAny(
   if (selector === 'ifNil:') {
     return withBlock(first, (block) => (receiver.kind === 'nil' ? invoke(block, []) : receiver));
   }
-  if (!isEquatable(receiver)) return undefined;
+  // ブロックだけが `=` を持たない（§5.1）。**それ以外はどのクラスも同じ形で持つ**ので、
+  // クラスごとに書くと足し忘れた 1 つが `#DoesNotUnderstand` になる。
+  if (receiver.kind === 'block') return undefined;
   // = と ~= は型が違ってもエラーにならない。等しくないだけである（§6.1）。
   if (selector === '=') return boolean(isEqual(receiver, first));
   if (selector === '~=') return boolean(!isEqual(receiver, first));
@@ -410,7 +494,8 @@ function dispatch(
     case 'nil':
       return undefined;
     case 'array':
-      return sendToArray(receiver, selector, args, invoke);
+    case 'interval':
+      return sendToSequence(receiver, selector, args, invoke);
   }
 }
 

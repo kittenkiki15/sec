@@ -62,6 +62,26 @@ export interface ArrayValue {
 }
 
 /**
+ * 数の区間（§6.3、[ADR-0016](../../../../docs/adr/0016-number-interval.md)）。
+ * **要素は数で、刻みは 1。** `Number to: Number` で作る。
+ *
+ * **個数を先に決め、要素は位置から計算する**（`i` 番目は `start + (i - 1)`）。
+ * 足し込みで進めると、倍精度で 1 を足しても値が変わらない大きさ（`1e21` 付近）で
+ * 上端に到達せず、列挙が終わらなくなる。
+ *
+ * **個数は `to:` の時点で決まる。** 求まらない区間は値として存在しない（`#Overflow`）。
+ * `stop` を持つのは表記のためだけで（§0.3 は端をそのまま書くと定める）、
+ * **要素は `start` と `count` から決まるので振る舞いには関わらない。**
+ */
+export interface IntervalValue {
+  readonly kind: 'interval';
+  readonly start: NumberValue;
+  readonly stop: NumberValue;
+  /** 要素の数。`floor(stop - start) + 1`。負になる場合は `0`（逆向きは空、ADR-0016）。 */
+  readonly count: bigint;
+}
+
+/**
  * 識別子から値への束縛（§5.1）。**平らな表 1 つで足りる。**
  * 外側と同じ名前を内側で宣言できない（§5.1、§7.5）ので、名前が衝突することがなく、
  * 内と外を分けて持って**どちらを先に見るかを決める必要が無い**ためである。
@@ -90,7 +110,7 @@ export interface ErrorValue {
 
 /**
  * 数式の評価結果（§6.0 の値の分類）。
- * `Range` / `Interval` / `Cell` はセル参照が要るため、まだ無い。
+ * `Range` と `Cell` はセル参照が要るため、まだ無い。
  */
 export type Value =
   | IntegerValue
@@ -100,6 +120,7 @@ export type Value =
   | BooleanValue
   | NilValue
   | ArrayValue
+  | IntervalValue
   | BlockValue
   | ErrorValue;
 
@@ -166,6 +187,10 @@ export function printValue(value: Value): string {
     case 'array':
       // 入れ子の配列にも `#` が付く。要素の表記は種別に従うだけなので、そのまま辿る。
       return `#(${value.elements.map(printValue).join(' ')})`;
+    // 区間は端をそのまま書く（§0.3）。**個数は表記に出ない**ので、`5 to: 1` は
+    // 空であってもそう書く。要素を並べないのは、整数の端が任意精度だからでもある。
+    case 'interval':
+      return `${printValue(value.start)} to: ${printValue(value.stop)}`;
     // 引数の数も本体も表記しない（§5.1）。原文をそのまま書くと、空白の入れ方を
     // 変えただけでゴールデンテストが落ちる（エラーに文言を含めない理由と同じ）。
     case 'block':
