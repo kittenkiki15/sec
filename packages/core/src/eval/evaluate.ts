@@ -5,8 +5,10 @@
  * すべての引数は送信の前に評価される（先行評価）。**遅延評価はブロックで表す**（要件 F-2-9）。
  * 1 回の送信の中でどう検査するかは `send.ts` が引き受ける。
  *
- * **セル参照とマクロはまだ評価できず、例外になる**（段階 3 以降）。
- * ゴールデンテストの側はそれらのケースに `!pending` の印を付けてある（ADR-0019）。
+ * **セル参照（M3）とマクロ（M4）、およびどこにも束縛されていない識別子はまだ評価できず、
+ * 例外になる。** ゴールデンテストの側はそれらのケースに `!pending` の印を付けてある
+ * （ADR-0019）。束縛されていない識別子を §4.2 の `#Ref` にするのは、
+ * セル参照が解決できるようになってからでよい（`references.txt` が M3 待ちである）。
  *
  * **エラーは値として返し、例外にしない**（要件 F-8-1）。例外にすると評価の途中で制御が飛び、
  * §6.0 の伝播順序（受け手 → 引数を左から右 → 送信）を値の受け渡しで表せなくなる。
@@ -22,7 +24,7 @@ import {
   type SendNode,
 } from '../syntax/parser.ts';
 import { sendMessage } from './send.ts';
-import type { BlockValue, ReceivedValue, Value } from './value.ts';
+import type { BlockValue, Environment, ReceivedValue, Value } from './value.ts';
 
 /** まだ評価できないノードに当たったことを表す。**仕様上のエラーではない。** */
 export class NotImplementedError extends Error {
@@ -46,7 +48,8 @@ export class NotImplementedError extends Error {
  */
 export function evaluateFormula(source: string): Value {
   try {
-    return evaluate(parseFormula(source));
+    // 数式の最上位に束縛は無い。名前を導入できるのはブロックの引数だけである（§5.1）。
+    return evaluate(parseFormula(source), EMPTY_ENVIRONMENT);
   } catch (error) {
     if (error instanceof LexicalError || error instanceof ParseError) {
       return { kind: 'error', error: 'Syntax' };
@@ -65,8 +68,14 @@ export function evaluateFormula(source: string): Value {
   }
 }
 
-/** リテラル配列の要素は式ではなくリテラルなので（§2.4）、同じ経路で値にできる。 */
-function evaluate(node: Expression | LiteralNode): Value {
+const EMPTY_ENVIRONMENT: Environment = new Map();
+
+/**
+ * リテラル配列の要素は式ではなくリテラルなので（§2.4）、同じ経路で値にできる。
+ *
+ * @param environment その位置で見えている束縛（§5.1）。ブロックの引数だけが入る
+ */
+function evaluate(node: Expression | LiteralNode, environment: Environment): Value {
   switch (node.kind) {
     case 'integer':
       return { kind: 'integer', value: node.value };
@@ -81,7 +90,11 @@ function evaluate(node: Expression | LiteralNode): Value {
     case 'nil':
       return { kind: 'nil' };
     case 'array':
-      return { kind: 'array', elements: node.elements.map(evaluate) };
+      // リテラル配列の要素に識別子は現れない（§2.4）が、経路を分けない方が安い。
+      return {
+        kind: 'array',
+        elements: node.elements.map((element) => evaluate(element, environment)),
+      };
     // 構文解析の段階で生じたエラー（倍精度に収まらない小数）。木に載っているものを
     // そのまま値にする（ADR-0013）。構文エラーではないので #Syntax ではない。
     case 'error':
@@ -89,13 +102,18 @@ function evaluate(node: Expression | LiteralNode): Value {
     // **ブロックは作るだけでは本体を評価しない**（§5.1）。木のまま値に載せ、
     // `value` を送られたときに `invokeBlock` が評価する。
     case 'block':
-      return { kind: 'block', parameters: node.parameters, body: node };
+      return { kind: 'block', parameters: node.parameters, body: node, environment };
     case 'send':
-      return evaluateSend(node);
+      return evaluateSend(node, environment);
     case 'cell':
       throw new NotImplementedError('セル参照');
-    case 'identifier':
-      throw new NotImplementedError('識別子');
+    // 束縛されている識別子はブロックの引数（§5.1）。**それ以外は §4.2 が `#Ref` と
+    // 定めているが、セル参照が解決できない今はまだ実装しない**（M3）。
+    case 'identifier': {
+      const bound = environment.get(node.name);
+      if (bound === undefined) throw new NotImplementedError('束縛されていない識別子');
+      return bound;
+    }
   }
 }
 
@@ -106,13 +124,13 @@ function evaluate(node: Expression | LiteralNode): Value {
  * エラーの種別に強弱は無く、決めるのは順序だけである。打ち切りをここに集めてあるので、
  * **エラーが受け手や引数として送信まで届くことはない**（`ReceivedValue` がそれを表す）。
  */
-function evaluateSend(node: SendNode): Value {
-  const receiver = evaluate(node.receiver);
+function evaluateSend(node: SendNode, environment: Environment): Value {
+  const receiver = evaluate(node.receiver, environment);
   if (receiver.kind === 'error') return receiver;
 
   const args: ReceivedValue[] = [];
   for (const argument of node.arguments) {
-    const value = evaluate(argument);
+    const value = evaluate(argument, environment);
     if (value.kind === 'error') return value;
     args.push(value);
   }
@@ -127,8 +145,17 @@ function evaluateSend(node: SendNode): Value {
  * 文の列と一時変数を持てるのはマクロのブロックで（§7.5）、`parseFormula` はそれを弾く。
  * **弾かれた形がここへ来ることはないが、木の型は両方を許す**ので、来たときは
  * 未実装として扱う。黙って別の値を返さないのはリテラル以外のノードと同じ理由。
+ *
+ * **引数の数の検査をここに置いた**（§5.1）。`value:` の送信だけでなく、条件式が
+ * ブロックを引数なしで評価する経路（§5.2）にも同じ規則が当たる必要があるためで、
+ * 呼び出しの側それぞれに書くと**足し忘れた 1 つが検査を抜ける。**
+ *
+ * @param args 引数に束ねる値。セレクタの綴りが数を決める（`value:value:` なら 2 つ）
  */
-function invokeBlock(block: BlockValue): Value {
+function invokeBlock(block: BlockValue, args: readonly ReceivedValue[]): Value {
+  const environment = bindParameters(block, args);
+  if (environment === null) return { kind: 'error', error: 'TypeError' };
+
   const [statement] = block.body.statements;
   if (
     statement === undefined ||
@@ -139,5 +166,26 @@ function invokeBlock(block: BlockValue): Value {
   ) {
     throw new NotImplementedError('マクロのブロック');
   }
-  return evaluate(statement);
+
+  return evaluate(statement, environment);
+}
+
+/**
+ * ブロックが捕まえた環境に引数を重ねる。**名前が衝突することはない**（外側と同じ名前は
+ * 宣言できず、構文解析器が既に弾いている）ので、上書きの向きを考えずに済む。
+ *
+ * @returns 本体を評価する環境。**引数の数が合わなければ `null`**（§5.1 の `#TypeError`）
+ */
+function bindParameters(block: BlockValue, args: readonly ReceivedValue[]): Environment | null {
+  if (block.parameters.length !== args.length) return null;
+  if (args.length === 0) return block.environment;
+
+  const bindings = new Map(block.environment);
+  for (const [index, value] of args.entries()) {
+    const name = block.parameters[index];
+    // 数が合うことは上で確かめてあるので、ここへは来ない。
+    if (name === undefined) return null;
+    bindings.set(name, value);
+  }
+  return bindings;
 }

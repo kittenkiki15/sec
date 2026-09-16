@@ -169,7 +169,8 @@ describe('printValue のブロック', () => {
   // 変えただけでゴールデンテストが落ちる（エラーの表記に文言を含めない理由と同じ）。
   it('引数の数によらず aBlock と書く', () => {
     const body = { temporaries: [], statements: [{ kind: 'integer', value: 1n } as const] };
-    expect(printValue({ kind: 'block', parameters: [], body })).toBe('aBlock');
-    expect(printValue({ kind: 'block', parameters: ['x', 'y'], body })).toBe('aBlock');
+    const environment = new Map();
+    expect(printValue({ kind: 'block', parameters: [], body, environment })).toBe('aBlock');
+    expect(printValue({ kind: 'block', parameters: ['x', 'y'], body, environment })).toBe('aBlock');
   });
 });

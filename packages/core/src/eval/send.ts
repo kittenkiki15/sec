@@ -44,6 +44,7 @@ import {
   upperCase,
 } from './string.ts';
 import type {
+  ArrayValue,
   BlockValue,
   BooleanValue,
   ErrorValue,
@@ -58,11 +59,16 @@ import type {
 /**
  * ブロックの本体を評価して値にする。**評価器の側にしかできない**ので受け取る。
  * 条件式が選ばれた側だけを評価できるのは、引数がブロックの**値**で渡るからである（§5.2）。
+ *
+ * **引数の数の検査も向こう側にある**（§5.1）。条件式はブロックを引数なしで評価するので、
+ * `true ifTrue: [:x | x]` も `#TypeError` になる。
  */
-export type InvokeBlock = (block: BlockValue) => Value;
+export type InvokeBlock = (block: BlockValue, args: readonly ReceivedValue[]) => Value;
 
 const TYPE_ERROR: ErrorValue = { kind: 'error', error: 'TypeError' };
 const DOES_NOT_UNDERSTAND: ErrorValue = { kind: 'error', error: 'DoesNotUnderstand' };
+
+const NIL: Value = { kind: 'nil' };
 
 const boolean = (value: boolean): Value => ({ kind: 'boolean', value });
 const string = (value: string): Value => ({ kind: 'string', value });
@@ -235,9 +241,9 @@ function sendToString(
         return withString(first, (text) => string(receiver.value + text));
       case 'indexOf:':
         return withString(first, (text) => integer(indexOfSubstring(receiver.value, text)));
-      // 空になりうるものは現時点では String だけ（§5.2、§6.2）。
+      // 空になりうるものは String（§6.2）と Array / Interval（§6.3）。Range は空にならない。
       case 'ifEmpty:':
-        return withBlock(first, (block) => (receiver.value === '' ? invoke(block) : receiver));
+        return withBlock(first, (block) => (receiver.value === '' ? invoke(block, []) : receiver));
       default:
         return undefined;
     }
@@ -278,32 +284,69 @@ function sendToBoolean(
       // **選ばれなければ評価しない**（§6.2）。Smalltalk-80 と同じく、選んだときは
       // ブロックの値をそのまま返す。真偽値を返すブロックを渡すのが本来の使い方。
       case 'and:':
-        return withBlock(first, (block) => (receiver.value ? invoke(block) : boolean(false)));
+        return withBlock(first, (block) => (receiver.value ? invoke(block, []) : boolean(false)));
       case 'or:':
-        return withBlock(first, (block) => (receiver.value ? boolean(true) : invoke(block)));
+        return withBlock(first, (block) => (receiver.value ? boolean(true) : invoke(block, [])));
+      // **選ばれなければ `nil` を返す**（§5.2）。引数の型は選ばれない側でも検査する。
+      case 'ifTrue:':
+        return withBlock(first, (block) => (receiver.value ? invoke(block, []) : NIL));
+      case 'ifFalse:':
+        return withBlock(first, (block) => (receiver.value ? NIL : invoke(block, [])));
       default:
         return undefined;
     }
   }
 
-  if (selector !== 'ifTrue:ifFalse:') return undefined;
-  // 選ばれなかった側は評価しない。中にエラーがあっても生じない（§5.2）。
-  return withBlock(first, (whenTrue) =>
-    withBlock(second, (whenFalse) => invoke(receiver.value ? whenTrue : whenFalse)),
-  );
+  // **順序を入れ替えた形は別のセレクタである**（§5.2）。引数の並びが逆になるだけで、
+  // 選ばれなかった側を評価しないことは同じ。
+  if (selector === 'ifTrue:ifFalse:') {
+    return withBlock(first, (whenTrue) =>
+      withBlock(second, (whenFalse) => invoke(receiver.value ? whenTrue : whenFalse, [])),
+    );
+  }
+  if (selector === 'ifFalse:ifTrue:') {
+    return withBlock(first, (whenFalse) =>
+      withBlock(second, (whenTrue) => invoke(receiver.value ? whenTrue : whenFalse, [])),
+    );
+  }
+  return undefined;
 }
 
-/** ブロックのセレクタ（§5.1）。**引数の数が合わなければ `#TypeError`。** */
+/**
+ * ブロックのセレクタ（§5.1）。**セレクタの綴りが引数の数を決める**ので、
+ * `value` なら 0 個、`value:` なら 1 個、`value:value:` なら 2 個が `args` に並ぶ。
+ * **ブロックの引数の数と合うかを見るのは `invoke` の側**で、合わなければ `#TypeError`。
+ */
 function sendToBlock(
   receiver: BlockValue,
   selector: string,
+  args: readonly ReceivedValue[],
   invoke: InvokeBlock,
 ): Value | undefined {
-  // `value:` / `value:value:` は段階 5 で入れる。引数を名前に束ねる環境が要るためで、
-  // それが無いうちは**引数を取るブロックは数が合わない**として扱う。
-  if (selector !== 'value') return undefined;
-  if (receiver.parameters.length > 0) return TYPE_ERROR;
-  return invoke(receiver);
+  if (selector !== 'value' && selector !== 'value:' && selector !== 'value:value:') {
+    return undefined;
+  }
+  return invoke(receiver, args);
+}
+
+/**
+ * 配列のセレクタ。**持たせてあるのは `ifEmpty:` だけ**で、§6.3 の残りは段階 6 で足す。
+ * ここに 1 つだけあるのは、`ifEmpty:` が §6.3 ではなく**条件式として §5.2 の表にある**ため。
+ * 空になりうるものは `String`（§6.2）と `Array` / `Interval`（§6.3）である。
+ */
+function sendToArray(
+  receiver: ArrayValue,
+  selector: string,
+  args: readonly ReceivedValue[],
+  invoke: InvokeBlock,
+): Value | undefined {
+  // セレクタの綴りが引数の数を決めるので、`ifEmpty:` なら必ず 1 つ。
+  // 分割代入で受けているのは `noUncheckedIndexedAccess` の下で `undefined` を潰すため。
+  const [first] = args;
+  if (selector !== 'ifEmpty:' || first === undefined) return undefined;
+  return withBlock(first, (block) =>
+    receiver.elements.length === 0 ? invoke(block, []) : receiver,
+  );
 }
 
 /**
@@ -336,7 +379,7 @@ function sendToAny(
 
   // 受け手が nil でなければ引数は評価されない（§5.2）。受け手をそのまま返す。
   if (selector === 'ifNil:') {
-    return withBlock(first, (block) => (receiver.kind === 'nil' ? invoke(block) : receiver));
+    return withBlock(first, (block) => (receiver.kind === 'nil' ? invoke(block, []) : receiver));
   }
   if (!isEquatable(receiver)) return undefined;
   // = と ~= は型が違ってもエラーにならない。等しくないだけである（§6.1）。
@@ -360,15 +403,14 @@ function dispatch(
     case 'boolean':
       return sendToBoolean(receiver, selector, args, invoke);
     case 'block':
-      return sendToBlock(receiver, selector, invoke);
+      return sendToBlock(receiver, selector, args, invoke);
     // シンボルと nil が単独で持つセレクタは無い（§6.2）。理解するのは `sendToAny` の分だけで、
     // **シンボルは識別子であって文字の並びではない**ので `size` も `asUppercase` も持たない。
     case 'symbol':
     case 'nil':
       return undefined;
-    // §6.3 のセレクタはまだ持たせていない。
     case 'array':
-      return undefined;
+      return sendToArray(receiver, selector, args, invoke);
   }
 }
 
