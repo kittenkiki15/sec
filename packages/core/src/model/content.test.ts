@@ -110,7 +110,10 @@ describe('readContent の段 3（文字列）', () => {
   });
 
   it('閉じていない引用符も文字列。字句エラーは内容の解釈には出てこない', () => {
-    expect(readContent("'abc")).toEqual({ kind: 'value', value: { kind: 'string', value: "'abc" } });
+    expect(readContent("'abc")).toEqual({
+      kind: 'value',
+      value: { kind: 'string', value: "'abc" },
+    });
   });
 });
 
