@@ -496,6 +496,34 @@ describe('evaluateFormula の実行上限', () => {
   it('上限に達しない深さはそのまま評価する', () => {
     expect(evaluated(nested(100))).toBe(nested(100));
   });
+
+  // 区間は個数を先に決めるので、要素を並べずに極端に大きい区間を作れる（ADR-0016）。
+  // **列挙にはステップ数の上限が当たる**（要件 N-5、§7.8、CLAUDE.md 規約 4）。
+  it('極端に大きい区間の列挙は #Timeout になる', () => {
+    expect(evaluated('(1 to: 1e400) sum')).toBe('#Timeout');
+    expect(evaluated('(1 to: 1e400) collect: [:x | x]')).toBe('#Timeout');
+    expect(evaluated('(1 to: 1e400) detect: [:x | x > 1] ifNone: [0]')).toBe('#Timeout');
+    expect(evaluated('(1 to: 1e400) sorted: [:a :b | a < b]')).toBe('#Timeout');
+  });
+
+  it('上限が当たるのは列挙だけで、個数と位置で決まるものには当たらない', () => {
+    expect(evaluated('(1 to: 1e400) size')).toBe(`1${'0'.repeat(400)}`);
+    expect(evaluated('(1 to: 1e400) first')).toBe('1');
+    expect(evaluated('(1 to: 1e400) isEmpty')).toBe('false');
+  });
+
+  it('上限に達しない大きさの列挙はそのまま評価する', () => {
+    expect(evaluated('(1 to: 1000) sum')).toBe('500500');
+    expect(evaluated('(1 to: 1000) collect: [:x | x] ')).toBe(
+      evaluated('(1 to: 1000) collect: [:x | x]'),
+    );
+  });
+
+  // 予算は評価ごとに作り直す。使い切った評価が次の評価に影響しない。
+  it('上限は 1 回の評価ごとに数え直す', () => {
+    expect(evaluated('(1 to: 1e400) sum')).toBe('#Timeout');
+    expect(evaluated('(1 to: 1000) sum')).toBe('500500');
+  });
 });
 
 describe('evaluateFormula の String（§6.2）', () => {

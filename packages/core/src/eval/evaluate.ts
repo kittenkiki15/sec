@@ -23,8 +23,11 @@ import {
   parseFormula,
   type SendNode,
 } from '../syntax/parser.ts';
+import { StepBudget } from './budget.ts';
 import { sendMessage } from './send.ts';
 import type { BlockValue, Environment, ReceivedValue, Value } from './value.ts';
+
+const TIMEOUT: Value = { kind: 'error', error: 'Timeout' };
 
 /** まだ評価できないノードに当たったことを表す。**仕様上のエラーではない。** */
 export class NotImplementedError extends Error {
@@ -49,7 +52,8 @@ export class NotImplementedError extends Error {
 export function evaluateFormula(source: string): Value {
   try {
     // 数式の最上位に束縛は無い。名前を導入できるのはブロックの引数だけである（§5.1）。
-    return evaluate(parseFormula(source), EMPTY_ENVIRONMENT);
+    // **予算は評価ごとに作り直す**ので、使い切った評価が次の評価に影響しない。
+    return evaluate(parseFormula(source), EMPTY_ENVIRONMENT, new StepBudget());
   } catch (error) {
     if (error instanceof LexicalError || error instanceof ParseError) {
       return { kind: 'error', error: 'Syntax' };
@@ -57,10 +61,9 @@ export function evaluateFormula(source: string): Value {
     // 深い入れ子は構文解析器と評価器のどちらの再帰も尽きさせうる。**どちらで尽きても
     // 仕様外の例外を漏らさない。** 超過した評価は `#Timeout`（§7.8）。
     //
-    // **これは明示的な上限ではなく安全網である。** 本来はステップ数・時間・再帰深度を
-    // 予算として持つべきで（要件 N-5、CLAUDE.md 規約 4）、上限値は環境によって
-    // 妥当な値が違うため §7.8 が M4 送りにしている（#27）。
-    // それまでの間、呼び出し元が値だけを受け取れる状態を保つ。
+    // **これは上限そのものではなく安全網である。** ステップ数の上限は `StepBudget` が
+    // 持つが（要件 N-5、CLAUDE.md 規約 4）、**再帰の深さはステップ数では表せない。**
+    // 1 ステップしか使わない式でも入れ子が深ければスタックが尽きるので、両方が要る。
     if (error instanceof RangeError) {
       return { kind: 'error', error: 'Timeout' };
     }
@@ -74,8 +77,16 @@ const EMPTY_ENVIRONMENT: Environment = new Map();
  * リテラル配列の要素は式ではなくリテラルなので（§2.4）、同じ経路で値にできる。
  *
  * @param environment その位置で見えている束縛（§5.1）。ブロックの引数だけが入る
+ * @param budget 1 回の評価が使えるステップ数（要件 N-5、§7.8）
  */
-function evaluate(node: Expression | LiteralNode, environment: Environment): Value {
+function evaluate(
+  node: Expression | LiteralNode,
+  environment: Environment,
+  budget: StepBudget,
+): Value {
+  // **1 ノードの評価が 1 ステップ。** 尽きた評価は中断して `#Timeout`（§7.8）。
+  if (!budget.spend()) return TIMEOUT;
+
   switch (node.kind) {
     case 'integer':
       return { kind: 'integer', value: node.value };
@@ -93,7 +104,7 @@ function evaluate(node: Expression | LiteralNode, environment: Environment): Val
       // リテラル配列の要素に識別子は現れない（§2.4）が、経路を分けない方が安い。
       return {
         kind: 'array',
-        elements: node.elements.map((element) => evaluate(element, environment)),
+        elements: node.elements.map((element) => evaluate(element, environment, budget)),
       };
     // 構文解析の段階で生じたエラー（倍精度に収まらない小数）。木に載っているものを
     // そのまま値にする（ADR-0013）。構文エラーではないので #Syntax ではない。
@@ -104,7 +115,7 @@ function evaluate(node: Expression | LiteralNode, environment: Environment): Val
     case 'block':
       return { kind: 'block', parameters: node.parameters, body: node, environment };
     case 'send':
-      return evaluateSend(node, environment);
+      return evaluateSend(node, environment, budget);
     case 'cell':
       throw new NotImplementedError('セル参照');
     // 束縛されている識別子はブロックの引数（§5.1）。**それ以外は §4.2 が `#Ref` と
@@ -124,18 +135,25 @@ function evaluate(node: Expression | LiteralNode, environment: Environment): Val
  * エラーの種別に強弱は無く、決めるのは順序だけである。打ち切りをここに集めてあるので、
  * **エラーが受け手や引数として送信まで届くことはない**（`ReceivedValue` がそれを表す）。
  */
-function evaluateSend(node: SendNode, environment: Environment): Value {
-  const receiver = evaluate(node.receiver, environment);
+function evaluateSend(node: SendNode, environment: Environment, budget: StepBudget): Value {
+  const receiver = evaluate(node.receiver, environment, budget);
   if (receiver.kind === 'error') return receiver;
 
   const args: ReceivedValue[] = [];
   for (const argument of node.arguments) {
-    const value = evaluate(argument, environment);
+    const value = evaluate(argument, environment, budget);
     if (value.kind === 'error') return value;
     args.push(value);
   }
 
-  return sendMessage(receiver, node.selector, args, invokeBlock);
+  // 予算を `InvokeBlock` の形に閉じ込める。送信の側は引数の数だけを知っていればよい。
+  return sendMessage(
+    receiver,
+    node.selector,
+    args,
+    (block, blockArgs) => invokeBlock(block, blockArgs, budget),
+    budget,
+  );
 }
 
 /**
@@ -151,8 +169,9 @@ function evaluateSend(node: SendNode, environment: Environment): Value {
  * 呼び出しの側それぞれに書くと**足し忘れた 1 つが検査を抜ける。**
  *
  * @param args 引数に束ねる値。セレクタの綴りが数を決める（`value:value:` なら 2 つ）
+ * @param budget 1 回の評価が使えるステップ数（要件 N-5、§7.8）
  */
-function invokeBlock(block: BlockValue, args: readonly ReceivedValue[]): Value {
+function invokeBlock(block: BlockValue, args: readonly ReceivedValue[], budget: StepBudget): Value {
   const environment = bindParameters(block, args);
   if (environment === null) return { kind: 'error', error: 'TypeError' };
 
@@ -167,7 +186,7 @@ function invokeBlock(block: BlockValue, args: readonly ReceivedValue[]): Value {
     throw new NotImplementedError('マクロのブロック');
   }
 
-  return evaluate(statement, environment);
+  return evaluate(statement, environment, budget);
 }
 
 /**

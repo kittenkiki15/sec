@@ -20,6 +20,7 @@
  * `evaluate.test.mjs` の対象へ足していく運用の側（ADR-0019）。
  */
 
+import type { StepBudget } from './budget.ts';
 import {
   absoluteValue,
   add,
@@ -365,6 +366,7 @@ function sendToSequence(
   selector: string,
   args: readonly ReceivedValue[],
   invoke: InvokeBlock,
+  budget: StepBudget,
 ): Value | undefined {
   const [first, second] = args;
 
@@ -380,15 +382,15 @@ function sendToSequence(
       case 'last':
         return lastOf(receiver);
       case 'sum':
-        return sumOf(receiver);
+        return sumOf(receiver, budget);
       case 'count':
-        return countOf(receiver);
+        return countOf(receiver, budget);
       case 'min':
-        return minOf(receiver);
+        return minOf(receiver, budget);
       case 'max':
-        return maxOf(receiver);
+        return maxOf(receiver, budget);
       case 'average':
-        return averageOf(receiver);
+        return averageOf(receiver, budget);
       default:
         return undefined;
     }
@@ -400,13 +402,13 @@ function sendToSequence(
       case 'at:':
         return withInteger(first, (index) => at(receiver, index));
       case 'collect:':
-        return withBlock(first, (block) => collectWith(receiver, block, invoke));
+        return withBlock(first, (block) => collectWith(receiver, block, invoke, budget));
       case 'select:':
-        return withBlock(first, (block) => filterWith(receiver, block, invoke, true));
+        return withBlock(first, (block) => filterWith(receiver, block, invoke, true, budget));
       case 'reject:':
-        return withBlock(first, (block) => filterWith(receiver, block, invoke, false));
+        return withBlock(first, (block) => filterWith(receiver, block, invoke, false, budget));
       case 'sorted:':
-        return withBlock(first, (block) => sortWith(receiver, block, invoke));
+        return withBlock(first, (block) => sortWith(receiver, block, invoke, budget));
       // 空になりうるものは String（§6.2）と Array / Interval（§6.3）。Range は空にならない。
       // ifEmpty: は §6.3 ではなく条件式として §5.2 の表にある。
       case 'ifEmpty:':
@@ -421,12 +423,12 @@ function sendToSequence(
   // 引数の型は、評価されないときも検査する（§5.2 と同じ）。見つかれば ifNone: は評価しない。
   if (selector === 'detect:ifNone:') {
     return withBlock(first, (block) =>
-      withBlock(second, (none) => detectWith(receiver, block, none, invoke)),
+      withBlock(second, (none) => detectWith(receiver, block, none, invoke, budget)),
     );
   }
   // inject:into: の第 1 引数は初期値なので、型を選ばない。
   if (selector === 'inject:into:') {
-    return withBlock(second, (block) => injectWith(receiver, first, block, invoke));
+    return withBlock(second, (block) => injectWith(receiver, first, block, invoke, budget));
   }
   return undefined;
 }
@@ -477,6 +479,7 @@ function dispatch(
   selector: string,
   args: readonly ReceivedValue[],
   invoke: InvokeBlock,
+  budget: StepBudget,
 ): Value | undefined {
   switch (receiver.kind) {
     case 'integer':
@@ -495,7 +498,7 @@ function dispatch(
       return undefined;
     case 'array':
     case 'interval':
-      return sendToSequence(receiver, selector, args, invoke);
+      return sendToSequence(receiver, selector, args, invoke, budget);
   }
 }
 
@@ -506,6 +509,7 @@ function dispatch(
  * @param selector 連結済みのセレクタ（`between:and:`）
  * @param args 引数。セレクタの綴りが決める数だけ並ぶ
  * @param invoke ブロックの本体を評価する関数
+ * @param budget 1 回の評価が使えるステップ数（要件 N-5、§7.8）。列挙だけが使う
  * @returns 送信の結果。エラーも値として返る
  */
 export function sendMessage(
@@ -513,11 +517,12 @@ export function sendMessage(
   selector: string,
   args: readonly ReceivedValue[],
   invoke: InvokeBlock,
+  budget: StepBudget,
 ): Value {
   // 検査の順序 1（§6.0）: 受け手がそのセレクタを持たない。
   return (
     sendToAny(receiver, selector, args, invoke) ??
-    dispatch(receiver, selector, args, invoke) ??
+    dispatch(receiver, selector, args, invoke, budget) ??
     DOES_NOT_UNDERSTAND
   );
 }

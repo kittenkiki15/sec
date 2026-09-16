@@ -16,6 +16,7 @@
  * ここには「引数がブロックでなければ `#TypeError`」のような送信側の検査を置かない。
  */
 
+import type { StepBudget } from './budget.ts';
 import { add, compareNumbers, divide, isNumber, type Ordering, subtract } from './number.ts';
 import type { InvokeBlock } from './send.ts';
 import type {
@@ -31,6 +32,7 @@ import type {
 
 const TYPE_ERROR: ErrorValue = { kind: 'error', error: 'TypeError' };
 const SUBSCRIPT_OUT_OF_BOUNDS: ErrorValue = { kind: 'error', error: 'SubscriptOutOfBounds' };
+const TIMEOUT: ErrorValue = { kind: 'error', error: 'Timeout' };
 const NIL: Value = { kind: 'nil' };
 const ZERO: NumberValue = { kind: 'integer', value: 0n };
 
@@ -105,10 +107,16 @@ function* eachElement(receiver: SequenceValue): Generator<Value> {
 /**
  * 要素を並べる。**集計と列挙だけがこれを通る。**
  *
+ * **要素の数だけ先にステップを払う**（要件 N-5、§7.8）。並べる前に払うので、
+ * `1 to: 1e400` のような区間は 1 歩も進まず、配列を確保する前に `#Timeout` になる。
+ * **個数を先に決めてある**（ADR-0016）ことが、ここで効いている。
+ *
  * 要素がエラーになりうるのは、表せないリテラルを含むリテラル配列（`#(1.0e400)`）だけで、
  * そのときは**そのエラーが式全体の値になる**（§6.0）。
  */
-function elementList(receiver: SequenceValue): Collected {
+function elementList(receiver: SequenceValue, budget: StepBudget): Collected {
+  if (!budget.spend(sequenceSize(receiver))) return TIMEOUT;
+
   const elements: ReceivedValue[] = [];
   for (const element of eachElement(receiver)) {
     if (element.kind === 'error') return element;
@@ -165,8 +173,11 @@ function asNumbers(values: readonly ReceivedValue[]): readonly NumberValue[] | E
 }
 
 /** 集計の対象になる数。値が `nil` の要素を落としてから、数であることを確かめる。 */
-function aggregatedNumbers(receiver: SequenceValue): readonly NumberValue[] | ErrorValue {
-  const elements = elementList(receiver);
+function aggregatedNumbers(
+  receiver: SequenceValue,
+  budget: StepBudget,
+): readonly NumberValue[] | ErrorValue {
+  const elements = elementList(receiver, budget);
   if (isFailure(elements)) return elements;
   return asNumbers(presentValues(elements));
 }
@@ -183,14 +194,14 @@ function totalOf(numbers: readonly NumberValue[]): Value {
   return sum;
 }
 
-export function sumOf(receiver: SequenceValue): Value {
-  const numbers = aggregatedNumbers(receiver);
+export function sumOf(receiver: SequenceValue, budget: StepBudget): Value {
+  const numbers = aggregatedNumbers(receiver, budget);
   return isFailure(numbers) ? numbers : totalOf(numbers);
 }
 
 /** `count`。**数を要求しない**ので、文字列が入っていても数える（§6.3）。 */
-export function countOf(receiver: SequenceValue): Value {
-  const elements = elementList(receiver);
+export function countOf(receiver: SequenceValue, budget: StepBudget): Value {
+  const elements = elementList(receiver, budget);
   if (isFailure(elements)) return elements;
   return integer(BigInt(presentValues(elements).length));
 }
@@ -201,8 +212,8 @@ export function countOf(receiver: SequenceValue): Value {
  * **等しければ後の要素を採る。** §6.1 の `max:` / `min:` が「等しければ比較が偽になるので
  * 引数を返す」としているのと同じで、整数と小数のどちらが残るかがそこで決まる。
  */
-function extremumOf(receiver: SequenceValue, wanted: Ordering): Value {
-  const numbers = aggregatedNumbers(receiver);
+function extremumOf(receiver: SequenceValue, wanted: Ordering, budget: StepBudget): Value {
+  const numbers = aggregatedNumbers(receiver, budget);
   if (isFailure(numbers)) return numbers;
 
   let best: NumberValue | undefined;
@@ -212,16 +223,18 @@ function extremumOf(receiver: SequenceValue, wanted: Ordering): Value {
   return best ?? NIL;
 }
 
-export const minOf = (receiver: SequenceValue): Value => extremumOf(receiver, -1);
+export const minOf = (receiver: SequenceValue, budget: StepBudget): Value =>
+  extremumOf(receiver, -1, budget);
 
-export const maxOf = (receiver: SequenceValue): Value => extremumOf(receiver, 1);
+export const maxOf = (receiver: SequenceValue, budget: StepBudget): Value =>
+  extremumOf(receiver, 1, budget);
 
 /**
  * `average`。**空なら `nil`。** 割り算は §6.1 の `/` と同じなので、
  * 割り切れれば整数を返す。**割るのは値が `nil` でない要素の数**である（ADR-0010）。
  */
-export function averageOf(receiver: SequenceValue): Value {
-  const numbers = aggregatedNumbers(receiver);
+export function averageOf(receiver: SequenceValue, budget: StepBudget): Value {
+  const numbers = aggregatedNumbers(receiver, budget);
   if (isFailure(numbers)) return numbers;
   if (numbers.length === 0) return NIL;
 
@@ -247,8 +260,9 @@ export function collectWith(
   receiver: SequenceValue,
   block: BlockValue,
   invoke: InvokeBlock,
+  budget: StepBudget,
 ): Value {
-  const elements = elementList(receiver);
+  const elements = elementList(receiver, budget);
   if (isFailure(elements)) return elements;
 
   const collected: ReceivedValue[] = [];
@@ -271,8 +285,9 @@ export function filterWith(
   block: BlockValue,
   invoke: InvokeBlock,
   keep: boolean,
+  budget: StepBudget,
 ): Value {
-  const elements = elementList(receiver);
+  const elements = elementList(receiver, budget);
   if (isFailure(elements)) return elements;
 
   const filtered: ReceivedValue[] = [];
@@ -290,8 +305,9 @@ export function detectWith(
   block: BlockValue,
   none: BlockValue,
   invoke: InvokeBlock,
+  budget: StepBudget,
 ): Value {
-  const elements = elementList(receiver);
+  const elements = elementList(receiver, budget);
   if (isFailure(elements)) return elements;
 
   for (const element of elements) {
@@ -308,8 +324,9 @@ export function injectWith(
   initial: ReceivedValue,
   block: BlockValue,
   invoke: InvokeBlock,
+  budget: StepBudget,
 ): Value {
-  const elements = elementList(receiver);
+  const elements = elementList(receiver, budget);
   if (isFailure(elements)) return elements;
 
   let accumulated: ReceivedValue = initial;
@@ -366,8 +383,13 @@ function mergeSort(
 }
 
 /** `sorted:`。**返り値は `Array`**（§6.3）。比較のブロックは引数を 2 つ取る。 */
-export function sortWith(receiver: SequenceValue, block: BlockValue, invoke: InvokeBlock): Value {
-  const elements = elementList(receiver);
+export function sortWith(
+  receiver: SequenceValue,
+  block: BlockValue,
+  invoke: InvokeBlock,
+  budget: StepBudget,
+): Value {
+  const elements = elementList(receiver, budget);
   if (isFailure(elements)) return elements;
 
   const sorted = mergeSort(elements, (a, b) => condition(invoke(block, [a, b])));
