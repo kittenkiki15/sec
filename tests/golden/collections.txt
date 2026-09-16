@@ -794,13 +794,11 @@ A1..A2 ~= (A1..A3)
 "--- セル ---
 
 "Cell 自身が理解するのは value と to:（§4.2、§4.3）
-!pending m3
 !A1 := 1
 A1 value
 => 1
 
 "それ以外は保持する値へ委譲する
-!pending m3
 !A1 := 'abc'
 A1 size
 => 3
