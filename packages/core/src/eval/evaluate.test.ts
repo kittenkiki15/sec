@@ -496,6 +496,42 @@ describe('evaluateFormula の実行上限', () => {
   it('上限に達しない深さはそのまま評価する', () => {
     expect(evaluated(nested(100))).toBe(nested(100));
   });
+
+  // 区間は個数を先に決めるので、要素を並べずに極端に大きい区間を作れる（ADR-0016）。
+  // **列挙にはステップ数の上限が当たる**（要件 N-5、§7.8、CLAUDE.md 規約 4）。
+  it('極端に大きい区間の列挙は #Timeout になる', () => {
+    expect(evaluated('(1 to: 1e400) sum')).toBe('#Timeout');
+    expect(evaluated('(1 to: 1e400) collect: [:x | x]')).toBe('#Timeout');
+    expect(evaluated('(1 to: 1e400) detect: [:x | x > 1] ifNone: [0]')).toBe('#Timeout');
+    expect(evaluated('(1 to: 1e400) sorted: [:a :b | a < b]')).toBe('#Timeout');
+  });
+
+  it('上限が当たるのは列挙だけで、個数と位置で決まるものには当たらない', () => {
+    expect(evaluated('(1 to: 1e400) size')).toBe(`1${'0'.repeat(400)}`);
+    expect(evaluated('(1 to: 1e400) first')).toBe('1');
+    expect(evaluated('(1 to: 1e400) isEmpty')).toBe('false');
+  });
+
+  it('上限に達しない大きさの列挙はそのまま評価する', () => {
+    expect(evaluated('(1 to: 1000) sum')).toBe('500500');
+    expect(evaluated('((1 to: 1000) collect: [:x | x * 2]) size')).toBe('1000');
+    expect(evaluated('((1 to: 1000) collect: [:x | x * 2]) first')).toBe('2');
+    expect(evaluated('((1 to: 1000) collect: [:x | x * 2]) last')).toBe('2000');
+  });
+
+  // **予算切れは値ではなく打ち切りである。** リテラル配列の要素を評価している途中で
+  // 尽きたとき、#Timeout を要素に混ぜると「打ち切られた」ことが式の値から読み取れない。
+  // 要素の #Overflow（#(1.0e400)）とは違い、これは要素の値ではない。
+  it('リテラル配列の途中で尽きても、式全体が #Timeout になる', () => {
+    const huge = `#(${'1 '.repeat(1_000_100)})`;
+    expect(evaluateFormula(huge)).toEqual({ kind: 'error', error: 'Timeout' });
+  });
+
+  // 予算は評価ごとに作り直す。使い切った評価が次の評価に影響しない。
+  it('上限は 1 回の評価ごとに数え直す', () => {
+    expect(evaluated('(1 to: 1e400) sum')).toBe('#Timeout');
+    expect(evaluated('(1 to: 1000) sum')).toBe('500500');
+  });
 });
 
 describe('evaluateFormula の String（§6.2）', () => {
@@ -654,5 +690,177 @@ describe('evaluateFormula の Symbol と nil（§6.2）', () => {
     expect(evaluated('nil = nil')).toBe('true');
     expect(evaluated('nil = false')).toBe('false');
     expect(evaluated('nil ~= nil')).toBe('false');
+  });
+});
+
+describe('evaluateFormula の Array（§6.3）', () => {
+  it('添字は 1 起点で、範囲外と型の誤りを分ける（ADR-0014）', () => {
+    expect(evaluated('#(1 2 3) at: 1')).toBe('1');
+    expect(evaluated('#(1 2 3) at: 0')).toBe('#SubscriptOutOfBounds');
+    expect(evaluated('#(1 2 3) at: 4')).toBe('#SubscriptOutOfBounds');
+    // 型の誤りは範囲外より先に出る（§6.0 の検査の順序）。
+    expect(evaluated("#(1 2 3) at: 'x'")).toBe('#TypeError');
+    expect(evaluated('#(1 2 3) at: 99.0')).toBe('#TypeError');
+  });
+
+  it('first と last は添字アクセスなので、空なら範囲外', () => {
+    expect(evaluated('#() first')).toBe('#SubscriptOutOfBounds');
+    expect(evaluated('#() last')).toBe('#SubscriptOutOfBounds');
+    // 集計は空でも値を返す。単位元があるものだけ（ADR-0010）。
+    expect(evaluated('#() sum')).toBe('0');
+    expect(evaluated('#() min')).toBe('nil');
+  });
+
+  it('集計は値が nil の要素を無視し、列挙は無視しない（ADR-0010）', () => {
+    expect(evaluated('#(1 nil 3) sum')).toBe('4');
+    expect(evaluated('#(1 nil 3) count')).toBe('2');
+    expect(evaluated('#(1 nil 3) size')).toBe('3');
+    expect(evaluated('#(1 nil 3) average')).toBe('2');
+    expect(evaluated('#(1 nil 3) collect: [:x | x isNil]')).toBe('#(false true false)');
+  });
+
+  it('集計は数を要求する。count だけは数えるだけ', () => {
+    expect(evaluated("#(1 'a' 3) sum")).toBe('#TypeError');
+    expect(evaluated("#(1 'a' 3) max")).toBe('#TypeError');
+    expect(evaluated("#(1 'a' 3) count")).toBe('3');
+  });
+
+  it('average は §6.1 の / と同じく、割り切れれば整数を返す', () => {
+    expect(evaluated('#(1 2 3) average')).toBe('2');
+    expect(evaluated('#(1 2 4) average')).toBe('2.3333333333333335');
+  });
+
+  it('列挙の結果は常に Array で、要素の順序を保つ', () => {
+    expect(evaluated('#(1 2 3) collect: [:x | x * 2]')).toBe('#(2 4 6)');
+    expect(evaluated('#(1 2 3) select: [:x | x > 1]')).toBe('#(2 3)');
+    expect(evaluated('#(1 2 3) reject: [:x | x > 1]')).toBe('#(1)');
+    expect(evaluated('#(1 2 3) inject: 0 into: [:acc :x | acc + x]')).toBe('6');
+  });
+
+  it('選び出しのブロックは真偽値を返さなければならない（§7.6 の whileTrue: と同じ）', () => {
+    expect(evaluated('#(1 2 3) select: [:x | x]')).toBe('#TypeError');
+    expect(evaluated('#(1 2 3) reject: [:x | nil]')).toBe('#TypeError');
+    expect(evaluated('#(1 2 3) detect: [:x | x] ifNone: [0]')).toBe('#TypeError');
+    expect(evaluated('#(3 1 2) sorted: [:a :b | a]')).toBe('#TypeError');
+  });
+
+  it('sorted: は同順の要素の並びを保つ（安定）', () => {
+    expect(evaluated('#(3 1 2) sorted: [:a :b | a < b]')).toBe('#(1 2 3)');
+    expect(evaluated('#(3 1 2) sorted: [:a :b | a > b]')).toBe('#(3 2 1)');
+    // 整数と小数は値が等しいので順序が付かない。元の並びが残る。
+    expect(evaluated('#(1 1.0) sorted: [:a :b | a < b]')).toBe('#(1 1.0)');
+    expect(evaluated('#(1.0 1) sorted: [:a :b | a < b]')).toBe('#(1.0 1)');
+  });
+
+  it('ブロックの中で生じたエラーが式全体の値になる（§6.0）', () => {
+    expect(evaluated('#(1 2 3) collect: [:x | x / 0]')).toBe('#DivideByZero');
+    expect(evaluated('#(1 2 3) select: [:x | x foo]')).toBe('#DoesNotUnderstand');
+    expect(evaluated('#(1 2 3) sorted: [:a :b | a / 0]')).toBe('#DivideByZero');
+  });
+
+  // **「評価しない」は受け手が空の場合に限らない。** sorted: の比較は要素が 2 つ以上
+  // なければ起こらないので、要素が 1 つなら引数の数も返り値もエラーも問われない。
+  it('要素が 1 つの sorted: は比較のブロックを評価しない', () => {
+    expect(evaluated('#(1) sorted: [:a :b | a]')).toBe('#(1)');
+    expect(evaluated('#(1) sorted: [:x | x]')).toBe('#(1)');
+    expect(evaluated('#(1) sorted: [:a :b | a / 0]')).toBe('#(1)');
+    expect(evaluated('#() sorted: [:x | x]')).toBe('#()');
+    // 比較が起きれば問われる。引数の型は評価しなくても見えるので常に検査する。
+    expect(evaluated('#(1 2) sorted: [:a :b | a]')).toBe('#TypeError');
+    expect(evaluated('#(1) sorted: 1')).toBe('#TypeError');
+  });
+
+  it('受け手が空ならブロックを評価しないので、引数の数も問われない（§5.2 と同じ）', () => {
+    expect(evaluated('#() collect: [:a :b | a]')).toBe('#()');
+    expect(evaluated('#() inject: 0 into: [:acc | acc]')).toBe('0');
+    // 評価される経路では引数の数が問われる（§5.1）。
+    expect(evaluated('#(1 2 3) collect: [:a :b | a]')).toBe('#TypeError');
+    expect(evaluated('#(1 2 3) inject: 0 into: [:acc | acc]')).toBe('#TypeError');
+  });
+
+  it('引数の型は評価されないときも検査する（§5.2 と同じ）', () => {
+    expect(evaluated('#(1 2 3) collect: 1')).toBe('#TypeError');
+    expect(evaluated('#(1 2 3) detect: [:x | x > 1] ifNone: 0')).toBe('#TypeError');
+    expect(evaluated('#(1 2 3) detect: [:x | x > 1] ifNone: [:x | x]')).toBe('2');
+  });
+
+  it('等価性は同じクラス・同じ長さ・対応する位置の要素で決まる', () => {
+    expect(evaluated('#(1 2) = #(1 2)')).toBe('true');
+    expect(evaluated('#(1 2) = #(2 1)')).toBe('false');
+    expect(evaluated('#(1 2) = #(1 2 3)')).toBe('false');
+    expect(evaluated('#() = #()')).toBe('true');
+    // 要素の比較は §6.1 の = に従う。入れ子も要素として比べる。
+    expect(evaluated('#(1) = #(1.0)')).toBe('true');
+    expect(evaluated('#(1 #(2 3)) = #(1 #(2 3))')).toBe('true');
+    expect(evaluated('#(1 #(2 3)) = #(1 #(3 2))')).toBe('false');
+    // クラスが違えば等しくない。エラーにはならない（§6.3）。
+    expect(evaluated('#(1) = 1')).toBe('false');
+    expect(evaluated('#(1 2) ~= #(2 1)')).toBe('true');
+  });
+});
+
+describe('evaluateFormula の Interval（§6.3、ADR-0016）', () => {
+  it('Number への to: は区間を作り、表記は端をそのまま書く', () => {
+    expect(evaluated('1 to: 5')).toBe('1 to: 5');
+    expect(evaluated('1 to: 3.5')).toBe('1 to: 3.5');
+    expect(evaluated("1 to: 'a'")).toBe('#TypeError');
+  });
+
+  it('逆向きは空になる。範囲が正規化するのとは逆（ADR-0016）', () => {
+    expect(evaluated('5 to: 1')).toBe('5 to: 1');
+    expect(evaluated('(5 to: 1) size')).toBe('0');
+    expect(evaluated('(5 to: 1) isEmpty')).toBe('true');
+    expect(evaluated('(5 to: 1) first')).toBe('#SubscriptOutOfBounds');
+    expect(evaluated('(5 to: 1) sum')).toBe('0');
+    expect(evaluated('(5 to: 1) max')).toBe('nil');
+  });
+
+  it('個数は floor(stop - start) + 1。負なら 0', () => {
+    expect(evaluated('(1 to: 3.5) size')).toBe('3');
+    expect(evaluated('(1 to: 0.5) size')).toBe('0');
+    expect(evaluated('(3 to: 3) size')).toBe('1');
+    // 1 を足しても値が変わらない大きさでも、個数が先に決まるので止まる。
+    expect(evaluated('(1.0e21 to: 1.0e21) size')).toBe('1');
+  });
+
+  it('要素は start + (i - 1) なので、種別は下端から伝染する', () => {
+    expect(evaluated('(1 to: 3.5) last')).toBe('3');
+    expect(evaluated('(1.5 to: 4) at: 2')).toBe('2.5');
+    expect(evaluated('(1.5 to: 4) last')).toBe('3.5');
+    expect(evaluated('(10 to: 14) at: 3')).toBe('12');
+  });
+
+  it('個数が求まらなければ to: が #Overflow を返す（ADR-0013）', () => {
+    expect(evaluated('-1.0e308 to: 1.0e308')).toBe('#Overflow');
+    expect(evaluated('(-1.0e308 to: 1.0e308) size')).toBe('#Overflow');
+    expect(evaluated('(0.0 to: 1.0e308) isEmpty')).toBe('false');
+  });
+
+  it('整数の端は任意精度なので、要素を並べずに個数が決まる', () => {
+    expect(evaluated('(1 to: 1e400) isEmpty')).toBe('false');
+    expect(evaluated('(1 to: 1e400) first')).toBe('1');
+  });
+
+  it('列挙の結果は Array であって Interval ではない', () => {
+    expect(evaluated('(1 to: 5) collect: [:x | x * 2]')).toBe('#(2 4 6 8 10)');
+    expect(evaluated('(1 to: 5) select: [:x | x > 3]')).toBe('#(4 5)');
+    expect(evaluated('(5 to: 1) collect: [:x | x * 2]')).toBe('#()');
+  });
+
+  it('区間の要素は数なので value を理解しない', () => {
+    expect(evaluated('(1 to: 5) first value')).toBe('#DoesNotUnderstand');
+  });
+
+  it('等価性は要素で決まる。端の書き方が違っても要素が同じなら等しい', () => {
+    expect(evaluated('(1 to: 3) = (1 to: 3)')).toBe('true');
+    expect(evaluated('(1 to: 3) = (1 to: 3.5)')).toBe('true');
+    expect(evaluated('(1 to: 3) = (1 to: 4)')).toBe('false');
+    expect(evaluated('#(1 2) = (1 to: 2)')).toBe('false');
+    expect(evaluated('(1 to: 2) = #(1 2)')).toBe('false');
+  });
+
+  it('ifEmpty: の受け手になれる（§5.2）', () => {
+    expect(evaluated("(5 to: 1) ifEmpty: ['空']")).toBe("'空'");
+    expect(evaluated("(1 to: 5) ifEmpty: ['空']")).toBe('1 to: 5');
   });
 });

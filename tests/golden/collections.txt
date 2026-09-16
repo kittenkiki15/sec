@@ -105,6 +105,31 @@
 #(1 'a' 3) count
 => 3
 
+"集計は値が nil の要素を無視する（ADR-0010）。範囲の空セルと同じ規則が配列にも当たる
+#(1 nil 3) sum
+=> 4
+
+"count は nil を数えない。size は要素の数なので数える
+#(1 nil 3) count
+=> 2
+
+#(1 nil 3) size
+=> 3
+
+"average は nil を除いた個数で割る
+#(1 nil 3) average
+=> 2
+
+#(1 nil 3) min
+=> 1
+
+"すべて nil なら、空の集計と同じ扱い
+#(nil nil) sum
+=> 0
+
+#(nil nil) max
+=> nil
+
 "--- 配列の列挙 ---
 
 "配列は値を渡す
@@ -151,6 +176,70 @@
 => #TypeError
 
 #(1 2 3) inject: 0 into: [:acc | acc]
+=> #TypeError
+
+"列挙は nil を無視しない。飛ばすと要素数が変わり select: と区別が付かなくなる
+#(1 nil 3) collect: [:x | x isNil]
+=> #(false true false)
+
+"選び出しのブロックは真偽値を返さなければならない（§7.6 の whileTrue: と同じ）
+#(1 2 3) select: [:x | x]
+=> #TypeError
+
+#(1 2 3) reject: [:x | nil]
+=> #TypeError
+
+#(1 2 3) detect: [:x | x] ifNone: [0]
+=> #TypeError
+
+#(3 1 2) sorted: [:a :b | a]
+=> #TypeError
+
+"同順の要素は元の並びを保つ（安定）。整数と小数は値が等しいので順序が付かない
+#(1 1.0) sorted: [:a :b | a < b]
+=> #(1 1.0)
+
+#(1.0 1) sorted: [:a :b | a < b]
+=> #(1.0 1)
+
+"ブロックの中で生じたエラーが式全体の値になる（§6.0）
+#(1 2 3) collect: [:x | x / 0]
+=> #DivideByZero
+
+#(1 2 3) inject: 0 into: [:acc :x | acc foo]
+=> #DoesNotUnderstand
+
+"ifNone: の引数の型は、評価されないときも検査する（§5.2 と同じ）
+#(1 2 3) detect: [:x | x > 1] ifNone: 0
+=> #TypeError
+
+"引数の数は評価するときに初めて問われる。見つかれば ifNone: は評価されない
+#(1 2 3) detect: [:x | x > 1] ifNone: [:x | x]
+=> 2
+
+#(1 2 3) detect: [:x | x > 9] ifNone: [:x | x]
+=> #TypeError
+
+"ブロックを評価しなければ引数の数も返り値も問われない（§5.2 と同じ）
+#() collect: [:a :b | a]
+=> #()
+
+#() inject: 0 into: [:acc | acc]
+=> 0
+
+"「評価しない」は受け手が空の場合に限らない。
+"sorted: の比較は要素が 2 つ以上なければ起こらない
+#(1) sorted: [:a :b | a]
+=> #(1)
+
+#(1) sorted: [:a :b | a / 0]
+=> #(1)
+
+#() sorted: [:x | x]
+=> #()
+
+"引数の型は評価しなくても見えるので常に検査する
+#(1) sorted: 1
 => #TypeError
 
 "--- 範囲 ---
@@ -610,9 +699,32 @@ A1..A3 collect: [:c | c ifNil: [0]]
 (1 to: 1e400) isEmpty
 => false
 
+"ただし列挙には実行上限が当たる（要件 N-5、§7.8）。上限値は暫定で M4 で決めるが、
+"1e400 個はどんな上限も超えるので、値が決まってもこのケースは動かない
+(1 to: 1e400) sum
+=> #Timeout
+
+(1 to: 1e400) collect: [:x | x]
+=> #Timeout
+
+"上限が当たるのは列挙だけ。個数と位置で決まるものには当たらない
+(1 to: 1e400) first
+=> 1
+
 "引数が数でなければ型の誤り
 1 to: 'a'
 => #TypeError
+
+"表記は端をそのまま書く。上端が小数でも正準形と同じ形（§0.3）
+1 to: 3.5
+=> 1 to: 3.5
+
+"区間も ifEmpty: の受け手になれる。空になりうるのは String / Array / Interval（§6.3）
+(5 to: 1) ifEmpty: ['空']
+=> '空'
+
+(1 to: 5) ifEmpty: ['空']
+=> 1 to: 5
 
 "--- 等価性 ---
 
