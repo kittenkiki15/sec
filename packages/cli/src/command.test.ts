@@ -52,8 +52,9 @@ describe('sec eval', () => {
   });
 
   // 未実装は仕様上のエラーではないので、#Ref などの値に化けさせない（M3 / M4 で実装する）。
+  // セルからの範囲（§4.3）が M3 段階 3 の宿題として残っている。
   it('まだ評価できない式は終了コード 2 で、エラー値にしない', () => {
-    const result = runCommand(['eval', 'A1 + 1']);
+    const result = runCommand(['eval', 'A1..B2']);
     expect(result.stdout).toBe('');
     expect(result.stderr).toContain('未実装');
     expect(result.exitCode).toBe(2);

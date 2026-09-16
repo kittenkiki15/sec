@@ -15,6 +15,8 @@
  *
  * **セレクタは段階ごとに足す。** 現時点で持たせてあるのは §6.1 の `Number` 全体、
  * §6.2 の `String` / `Boolean` / `Symbol` / `nil` 全体と、`Block` の `value` である。
+ * **`Cell` 自身が理解するセレクタは `evaluate.ts` が持つ**（§4.2 の委譲の分かれ目そのもので、
+ * ここに置くと規則 1 と規則 2 の判定が 2 箇所に散る）。
  * **持たせていないセレクタは `#DoesNotUnderstand` になる。** これは仕様上ありうる値なので、
  * 未実装であることの印にはならない。取り違えを防ぐのは、緑にしたファイルを
  * `evaluate.test.mjs` の対象へ足していく運用の側（ADR-0019）。
@@ -63,14 +65,15 @@ import {
   parseNumber,
   upperCase,
 } from './string.ts';
-import type {
-  BlockValue,
-  BooleanValue,
-  ErrorValue,
-  NumberValue,
-  ReceivedValue,
-  StringValue,
-  Value,
+import {
+  type BlockValue,
+  type BooleanValue,
+  type ErrorValue,
+  heldValue,
+  type NumberValue,
+  type ReceivedValue,
+  type StringValue,
+  type Value,
 } from './value.ts';
 
 /**
@@ -102,8 +105,15 @@ const integer = (value: bigint): Value => ({ kind: 'integer', value });
  * 要素にはエラー（`#(1.0e400)` のような表せないリテラル）もブロックも現れうる。
  * どちらも `=` を持たないが、**`=` はエラーにならない**（§6.3 の表）ので、
  * ここで等しいかどうかだけを答える。
+ *
+ * **セルは保持する値で比べる**（§4.2）。`Cell` は `=` を定義せず、委譲の規則がそのまま働く。
+ * 受け手としてここへ来ることはない（送信の直前に解決される）が、**範囲の列挙は
+ * 配列の要素としてセルを渡す**（M3 段階 4）ので、両側を解決してから比べる。
  */
-function isEqual(receiver: Value, argument: Value): boolean {
+function isEqual(left: Value, right: Value): boolean {
+  const receiver = heldValue(left);
+  const argument = heldValue(right);
+
   switch (receiver.kind) {
     case 'integer':
     case 'decimal':
@@ -499,6 +509,10 @@ function dispatch(
     case 'array':
     case 'interval':
       return sendToSequence(receiver, selector, args, invoke, budget);
+    // **セルは受け手として届かない。** `Cell` 自身が理解するセレクタは `evaluate.ts` が
+    // 先に処理し（§4.2 の規則 1）、それ以外は保持する値へ置き換えられてから送られる（規則 2）。
+    case 'cell':
+      return undefined;
   }
 }
 

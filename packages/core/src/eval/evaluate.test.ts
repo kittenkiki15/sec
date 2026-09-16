@@ -452,8 +452,8 @@ describe('evaluateFormula のブロックの引数（§5.1）', () => {
     expect(evaluated('[:x :x | x] value: 1 value: 2')).toBe('#Syntax');
   });
 
-  it('束縛されていない識別子はまだ評価できない（§4.2 の #Ref は M3）', () => {
-    expect(() => evaluateFormula('[:x | y] value: 1')).toThrow(/未実装/);
+  it('ブロックの中でも、束縛されていない識別子は #Ref（§4.2）', () => {
+    expect(evaluated('[:x | y] value: 1')).toBe('#Ref');
   });
 });
 

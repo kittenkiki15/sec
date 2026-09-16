@@ -14,6 +14,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { evaluateFormula, printValue } from '../../packages/core/src/eval/index.ts';
+import { parseAddress, Sheet, sheetValues } from '../../packages/core/src/model/index.ts';
 import {
   formatGoldenFailures,
   parseGoldenFile,
@@ -43,11 +44,26 @@ const COVERED = [
   'assignment.txt',
 ];
 
-/** ゴールデンテストの入力を評価器に渡す。マクロとシートはまだ無い。 */
+/**
+ * ケースのセルの指定（`!A1 := 1`、ADR-0009）からシートを組む。
+ *
+ * **番地は正規化される**（ADR-0020）ので、`!A007 := 1` は `A7` のセルになる。
+ */
+const buildSheet = (cells) => {
+  const sheet = new Sheet();
+  for (const [spelling, content] of cells) {
+    const address = parseAddress(spelling);
+    // ハーネスが綴りを検査済み（`parseGoldenFile`）なので、ここへは来ない。
+    if (address === null) throw new Error(`${spelling} はセル参照の形ではありません。`);
+    sheet.put(address, content);
+  }
+  return sheet;
+};
+
+/** ゴールデンテストの入力を評価器に渡す。マクロはまだ無い。 */
 const evaluate = ({ source, sheet, kind }) => {
   if (kind === 'macro') throw new Error('未実装: マクロの評価はまだできません。');
-  if (sheet.size > 0) throw new Error('未実装: シートの状態はまだ扱えません。');
-  return printValue(evaluateFormula(source).value);
+  return printValue(evaluateFormula(source, sheetValues(buildSheet(sheet))).value);
 };
 
 describe('ゴールデンテストの評価', () => {

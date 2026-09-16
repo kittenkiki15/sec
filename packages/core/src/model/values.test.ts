@@ -12,7 +12,7 @@ function addressOf(spelling: string) {
 }
 
 /** 内容を置いたシートを作り、あるセルの値を §0.3 の表記で取る。 */
-function valueOf(contents: Record<string, string>, spelling: string): string {
+function cellValue(contents: Record<string, string>, spelling: string): string {
   const sheet = new Sheet();
   for (const [cell, content] of Object.entries(contents)) {
     sheet.put(addressOf(cell), content);
@@ -22,38 +22,38 @@ function valueOf(contents: Record<string, string>, spelling: string): string {
 
 describe('sheetValues（§4.2、§4.4）', () => {
   it('内容の無いセルの値は nil（ADR-0010）', () => {
-    expect(valueOf({}, 'A1')).toBe('nil');
-    expect(valueOf({ A1: '1' }, 'B2')).toBe('nil');
+    expect(cellValue({}, 'A1')).toBe('nil');
+    expect(cellValue({ A1: '1' }, 'B2')).toBe('nil');
   });
 
   it('リテラルちょうど 1 つの内容はその値（段 2）', () => {
-    expect(valueOf({ A1: '1' }, 'A1')).toBe('1');
-    expect(valueOf({ A1: "'abc'" }, 'A1')).toBe("'abc'");
-    expect(valueOf({ A1: '#(1 2)' }, 'A1')).toBe('#(1 2)');
+    expect(cellValue({ A1: '1' }, 'A1')).toBe('1');
+    expect(cellValue({ A1: "'abc'" }, 'A1')).toBe("'abc'");
+    expect(cellValue({ A1: '#(1 2)' }, 'A1')).toBe('#(1 2)');
   });
 
   it('リテラルとして読めない内容は文字列（段 3）', () => {
-    expect(valueOf({ A1: 'abc' }, 'A1')).toBe("'abc'");
-    expect(valueOf({ A1: '1 + 2' }, 'A1')).toBe("'1 + 2'");
+    expect(cellValue({ A1: 'abc' }, 'A1')).toBe("'abc'");
+    expect(cellValue({ A1: '1 + 2' }, 'A1')).toBe("'1 + 2'");
   });
 
   // ゴールデンテストのセルの指定（ADR-0009）は内容の前後を落とすため、
   // **空白の扱いはここでしか確かめられない。**
   it('内容の前後の空白は段 2 で無視される（§1.1）', () => {
-    expect(valueOf({ A1: '  1  ' }, 'A1')).toBe('1');
+    expect(cellValue({ A1: '  1  ' }, 'A1')).toBe('1');
   });
 
   it('空白だけの内容は文字列であって空セルではない（§4.4）', () => {
-    expect(valueOf({ A1: '   ' }, 'A1')).toBe("'   '");
+    expect(cellValue({ A1: '   ' }, 'A1')).toBe("'   '");
   });
 
   it('先頭に空白のある内容は数式にならない（§4.4 の段 1）', () => {
-    expect(valueOf({ A1: '  =1 + 1' }, 'A1')).toBe("'  =1 + 1'");
+    expect(cellValue({ A1: '  =1 + 1' }, 'A1')).toBe("'  =1 + 1'");
   });
 
   it('番地は正規化されるので前ゼロは同じセルを指す（ADR-0020）', () => {
-    expect(valueOf({ A007: '1' }, 'A7')).toBe('1');
-    expect(valueOf({ A7: '1' }, 'A007')).toBe('1');
+    expect(cellValue({ A007: '1' }, 'A7')).toBe('1');
+    expect(cellValue({ A7: '1' }, 'A007')).toBe('1');
   });
 
   // 数式セルの値は他のセルの値に依存する（§4.2）ので、依存グラフが要る（M3 段階 5）。
