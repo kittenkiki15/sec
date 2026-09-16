@@ -1,0 +1,12 @@
+{
+  "name": "@sec/cli",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "sec": "./src/main.ts"
+  },
+  "dependencies": {
+    "@sec/core": "workspace:*"
+  }
+}
