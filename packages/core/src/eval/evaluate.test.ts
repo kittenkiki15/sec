@@ -376,6 +376,95 @@ describe('evaluateFormula のブロックと条件式（§5）', () => {
   });
 });
 
+describe('evaluateFormula のブロックの引数（§5.1）', () => {
+  it('value: と value:value: で引数を束ねる', () => {
+    expect(evaluated('[:x | x * 2] value: 3')).toBe('6');
+    expect(evaluated('[:x :y | x - y] value: 10 value: 4')).toBe('6');
+  });
+
+  it('引数は本体の中で識別子として解決できる', () => {
+    expect(evaluated('[:each | each + 1] value: 10')).toBe('11');
+  });
+
+  it('引数の数が合わなければ #TypeError（§5.1）', () => {
+    expect(evaluated('[:x | x] value')).toBe('#TypeError');
+    expect(evaluated('[3] value: 1')).toBe('#TypeError');
+    expect(evaluated('[:x :y | x] value: 1')).toBe('#TypeError');
+    expect(evaluated('[:x | x] value: 1 value: 2')).toBe('#TypeError');
+  });
+
+  // 条件式もブロックを引数を渡さずに評価するので、同じ規則が当たる。
+  // §5.2 は受け手と引数の型しか定めていないが、引数の数の検査は呼び出しの側にある。
+  it('条件式が評価するブロックにも引数の数の検査が当たる', () => {
+    expect(evaluated('true ifTrue: [:x | x]')).toBe('#TypeError');
+    expect(evaluated('nil ifNil: [:x | x]')).toBe('#TypeError');
+  });
+
+  it('引数は送信の前に評価され、エラーならブロックは評価されない（§3.6）', () => {
+    expect(evaluated('[:x | 1] value: 1 / 0')).toBe('#DivideByZero');
+  });
+
+  it('ブロックは作られた時点の環境を捕まえる', () => {
+    expect(evaluated('[:x | [:y | x + y] value: 1] value: 2')).toBe('3');
+    // 捕まえた環境は、作った送信が終わった後も生きている。
+    expect(evaluated('([:x | [x + 1]] value: 2) value')).toBe('3');
+  });
+
+  it('外側の引数を内側から見た上で、内側の引数が優先されることはない（影は #Syntax）', () => {
+    expect(evaluated('[:x | [:x | x] value: 1] value: 2')).toBe('#Syntax');
+    expect(evaluated('[:x :x | x] value: 1 value: 2')).toBe('#Syntax');
+  });
+
+  it('束縛されていない識別子はまだ評価できない（§4.2 の #Ref は M3）', () => {
+    expect(() => evaluateFormula('[:x | y] value: 1')).toThrow(/未実装/);
+  });
+});
+
+describe('evaluateFormula の条件式の残り（§5.2）', () => {
+  it('ifTrue: と ifFalse: は選ばれなければ nil を返す', () => {
+    expect(evaluated('true ifTrue: [1]')).toBe('1');
+    expect(evaluated('false ifTrue: [1]')).toBe('nil');
+    expect(evaluated('false ifFalse: [2]')).toBe('2');
+    expect(evaluated('true ifFalse: [2]')).toBe('nil');
+  });
+
+  // 順序を入れ替えた形は別のセレクタなので、遅延評価も別に固定する必要がある（§5.2）。
+  it('ifFalse:ifTrue: も理解し、選ばれなかった側は評価されない', () => {
+    expect(evaluated('true ifFalse: [1 / 0] ifTrue: [2]')).toBe('2');
+    expect(evaluated('false ifFalse: [1] ifTrue: [1 / 0]')).toBe('1');
+  });
+
+  it('選ばれなかった側は評価されない（セレクタごとに固定する）', () => {
+    expect(evaluated('false ifTrue: [1 / 0]')).toBe('nil');
+    expect(evaluated('true ifFalse: [1 / 0]')).toBe('nil');
+    expect(evaluated('true ifTrue: [1 / 0]')).toBe('#DivideByZero');
+  });
+
+  it('引数はブロックでなければ #TypeError（要件 F-2-9）', () => {
+    expect(evaluated('true ifTrue: 1')).toBe('#TypeError');
+    expect(evaluated('false ifTrue: 1')).toBe('#TypeError');
+    expect(evaluated('true ifFalse: 1')).toBe('#TypeError');
+    expect(evaluated('true ifTrue: [1] ifFalse: 2')).toBe('#TypeError');
+    expect(evaluated('true ifFalse: 1 ifTrue: [2]')).toBe('#TypeError');
+  });
+
+  it('受け手が真偽値でなければ #DoesNotUnderstand', () => {
+    expect(evaluated('3 ifTrue: [1]')).toBe('#DoesNotUnderstand');
+    expect(evaluated('nil ifTrue: [1]')).toBe('#DoesNotUnderstand');
+    expect(evaluated("'abc' ifFalse: [1]")).toBe('#DoesNotUnderstand');
+  });
+
+  // 空になりうるものは String（§6.2）と Array / Interval（§6.3）。
+  // Array の残りのセレクタは段階 6 だが、ifEmpty: は条件式として §5.2 の表にある。
+  it('Array も ifEmpty: を理解する（§5.2）', () => {
+    expect(evaluated("#() ifEmpty: ['空']")).toBe("'空'");
+    expect(evaluated("#(1 2) ifEmpty: ['空']")).toBe('#(1 2)');
+    // 受け手が空でなければ引数は評価されない。
+    expect(evaluated('#(1 2) ifEmpty: [1 / 0]')).toBe('#(1 2)');
+    expect(evaluated('#() ifEmpty: 1')).toBe('#TypeError');
+  });
+});
+
 describe('evaluateFormula の実行上限', () => {
   /** `#(` を重ねた入力。入れ子の深さがそのまま再帰の深さになる。 */
   const nested = (depth: number): string => '#('.repeat(depth) + ')'.repeat(depth);
