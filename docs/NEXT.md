@@ -16,7 +16,8 @@
   [#19](https://github.com/kittenkiki15/sec/issues/19)）**ができた。**
   `packages/core/src/syntax/lexer.ts` と `parser.ts`。**仕様上の全構文をパースできる。**
   **`consistency.test.mjs` のセレクタ網羅の検査も入れた**（[#21](https://github.com/kittenkiki15/sec/issues/21)）。
-  **M1 の完了条件（要件定義書 §8）は満たした**
+  **M1 の完了条件（要件定義書 §8）は満たした。**
+  タグ `m1` は `9058d10` を指す（**M2 の完了後に遡って作った。** 当時作り忘れていた）
 - **M2（評価器 + CLI）に着手。段階 0（フィクスチャの分割）**
   （[#23](https://github.com/kittenkiki15/sec/issues/23)）**・段階 1（値の表記とリテラル）**
   （[#25](https://github.com/kittenkiki15/sec/issues/25)）**・段階 2（送信の骨格と
@@ -30,8 +31,7 @@
   `strings` 67 / `booleans` 49 / `blocks` 23 / `conditionals` 36 / `collections` 140）
 - **M2（評価器 + CLI）完了。段階 7（CLI）**（[#38](https://github.com/kittenkiki15/sec/issues/38)）
   **で `packages/cli` を作り、`pnpm sec eval '3 + 4 * 2'` が動く。**
-  **M2 の完了条件（要件定義書 §8）は満たした。** タグ `m2` はまだ作っていない
-  （Actions の **Tag milestone** ワークフローから作る。`!pending m2` は 1 件も残っていない）
+  **M2 の完了条件（要件定義書 §8）は満たした。** タグ `m2` は `684ebfd` を指す
 - **次は M3（シートモデルと再計算）**
 
 ## M0 の記録
