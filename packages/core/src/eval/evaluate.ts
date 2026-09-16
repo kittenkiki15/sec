@@ -111,6 +111,19 @@ export function evaluateFormula(source: string): Evaluation {
 const EMPTY_ENVIRONMENT: Environment = new Map();
 
 /**
+ * リテラルを値にする。**環境も送信も要らない**ので、束縛の無い環境で評価できる。
+ *
+ * セルの内容の解釈（ADR-0021 の段 2）が使う。`evaluateFormula` に原文を渡し直す形でも
+ * 書けるが、**同じ原文を 2 度解析することになる。** 呼び出し側は既に木を持っている。
+ *
+ * @param node 構文解析器がリテラルとして読んだノード
+ * @returns その値。**エラーになることがある**（`1.0e400` は `#Overflow`、ADR-0013）
+ */
+export function evaluateLiteral(node: LiteralNode): Value {
+  return evaluate(node, EMPTY_ENVIRONMENT, new StepBudget());
+}
+
+/**
  * リテラル配列の要素は式ではなくリテラルなので（§2.4）、同じ経路で値にできる。
  *
  * @param environment その位置で見えている束縛（§5.1）。ブロックの引数だけが入る

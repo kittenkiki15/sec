@@ -145,7 +145,7 @@ a := 3.
 | §1 字句 / §2 リテラル | `literals.txt` |
 | §3 メッセージ式 | `messages.txt` |
 | §3.5 優先順位 | `precedence.txt` |
-| §4 セル参照と範囲 | `references.txt` / `ranges.txt` |
+| §4 セルと範囲 | `references.txt` / `ranges.txt` |
 | §5 ブロックと条件 | `blocks.txt` / `conditionals.txt` |
 | §6.0 エラーの伝播順序と検査の順序 | `errors.txt` |
 | §6.1 `Number` | `numbers.txt` |
