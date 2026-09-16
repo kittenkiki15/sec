@@ -514,9 +514,9 @@ describe('evaluateFormula の実行上限', () => {
 
   it('上限に達しない大きさの列挙はそのまま評価する', () => {
     expect(evaluated('(1 to: 1000) sum')).toBe('500500');
-    expect(evaluated('(1 to: 1000) collect: [:x | x] ')).toBe(
-      evaluated('(1 to: 1000) collect: [:x | x]'),
-    );
+    expect(evaluated('((1 to: 1000) collect: [:x | x * 2]) size')).toBe('1000');
+    expect(evaluated('((1 to: 1000) collect: [:x | x * 2]) first')).toBe('2');
+    expect(evaluated('((1 to: 1000) collect: [:x | x * 2]) last')).toBe('2000');
   });
 
   // **予算切れは値ではなく打ち切りである。** リテラル配列の要素を評価している途中で
@@ -756,6 +756,18 @@ describe('evaluateFormula の Array（§6.3）', () => {
     expect(evaluated('#(1 2 3) collect: [:x | x / 0]')).toBe('#DivideByZero');
     expect(evaluated('#(1 2 3) select: [:x | x foo]')).toBe('#DoesNotUnderstand');
     expect(evaluated('#(1 2 3) sorted: [:a :b | a / 0]')).toBe('#DivideByZero');
+  });
+
+  // **「評価しない」は受け手が空の場合に限らない。** sorted: の比較は要素が 2 つ以上
+  // なければ起こらないので、要素が 1 つなら引数の数も返り値もエラーも問われない。
+  it('要素が 1 つの sorted: は比較のブロックを評価しない', () => {
+    expect(evaluated('#(1) sorted: [:a :b | a]')).toBe('#(1)');
+    expect(evaluated('#(1) sorted: [:x | x]')).toBe('#(1)');
+    expect(evaluated('#(1) sorted: [:a :b | a / 0]')).toBe('#(1)');
+    expect(evaluated('#() sorted: [:x | x]')).toBe('#()');
+    // 比較が起きれば問われる。引数の型は評価しなくても見えるので常に検査する。
+    expect(evaluated('#(1 2) sorted: [:a :b | a]')).toBe('#TypeError');
+    expect(evaluated('#(1) sorted: 1')).toBe('#TypeError');
   });
 
   it('受け手が空ならブロックを評価しないので、引数の数も問われない（§5.2 と同じ）', () => {
