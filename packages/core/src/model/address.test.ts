@@ -71,4 +71,12 @@ describe('isResolvable', () => {
   it('正規化した結果が 0 の番地は解決できない（ADR-0020）', () => {
     expect(isResolvable({ column: 'A', row: 0n })).toBe(false);
   });
+
+  // 番地は構造型なので、`parseAddress` を通さない値を呼び出し側が組み立てられる。
+  it('列の綴りでない番地は解決できない', () => {
+    expect(isResolvable({ column: 'A1', row: 2n })).toBe(false);
+    expect(isResolvable({ column: '', row: 1n })).toBe(false);
+    expect(isResolvable({ column: 'a', row: 1n })).toBe(false);
+    expect(isResolvable({ column: 'A ', row: 1n })).toBe(false);
+  });
 });

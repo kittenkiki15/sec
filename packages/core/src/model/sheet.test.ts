@@ -60,6 +60,17 @@ describe('Sheet', () => {
     expect(() => sheet.put(at('A0'), '1')).toThrow(/A0/);
   });
 
+  // 番地は構造型なので、`parseAddress` を通さない値を呼び出し側が組み立てられる。
+  // 列の綴りを検査しないと、`printAddress` の単純連結が別のセルのキーと衝突する。
+  it('列の綴りでない番地は、別のセルのキーと衝突しない', () => {
+    const sheet = new Sheet();
+    const bogus: CellAddress = { column: 'A1', row: 2n };
+
+    expect(() => sheet.put(bogus, '衝突')).toThrow(/"A1" は列の綴りではありません/);
+    expect(sheet.contentAt(bogus)).toBe('');
+    expect(sheet.contentAt(at('A12'))).toBe('');
+  });
+
   it('解決できない番地は常に空。読むことはできる', () => {
     const sheet = new Sheet();
     expect(sheet.contentAt(at('A0'))).toBe('');

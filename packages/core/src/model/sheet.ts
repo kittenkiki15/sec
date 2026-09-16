@@ -21,6 +21,10 @@ export class Sheet {
    * @returns 内容の原文。**空のセルは空文字列**（ADR-0010 の `nil` になるのは値の側）
    */
   contentAt(address: CellAddress): string {
+    // **キーを組み立てる前に返す。** 存在しない番地に内容は無いうえ、
+    // 列の綴りでない番地が**別のセルの内容を読んでしまう**のを防ぐ（`isResolvable`）。
+    if (!isResolvable(address)) return '';
+
     return this.#contents.get(printAddress(address)) ?? '';
   }
 
@@ -42,8 +46,13 @@ export class Sheet {
     // 捕まえて `#Timeout` にしており（`evaluateFormula`）、マクロのセルへの代入（§7.4、M4）が
     // 評価の途中でここを呼ぶようになったとき、**呼び出し側の誤りが打ち切りに化ける。**
     if (!isResolvable(address)) {
+      // **列が壊れているときに正規化した綴りを見せない。** `{ column: 'A1', row: 2n }` を
+      // `A12` と書くと、実在するセルの名前を騙って報告することになる。
       throw new Error(
-        `セル ${printAddress(address)} は存在しません。行は 1 始まりです（要件 F-1-3）。`,
+        address.row > 0n
+          ? `${JSON.stringify(address.column)} は列の綴りではありません。` +
+              `列は大文字の英字です（§4.1）。`
+          : `セル ${printAddress(address)} は存在しません。行は 1 始まりです（要件 F-1-3）。`,
       );
     }
 

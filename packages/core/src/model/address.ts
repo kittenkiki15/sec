@@ -16,8 +16,14 @@ export interface CellAddress {
   readonly row: bigint;
 }
 
+/** §4.1 の列の形。**1 箇所から組み立てる**ので、下の 2 つが食い違うことがない。 */
+const COLUMN = '[A-Z]+';
+
+/** 列の綴りそのもの。手で組み立てた番地の検査に使う（`isResolvable`）。 */
+const COLUMN_SPELLING = new RegExp(`^${COLUMN}$`);
+
 /** §4.1 のセル参照の形。列と行を切り出すために、字句規則を群に分けて写したもの。 */
-const CELL_REFERENCE = /^([A-Z]+)([0-9]+)$/;
+const CELL_REFERENCE = new RegExp(`^(${COLUMN})([0-9]+)$`);
 
 /**
  * 綴りを番地として読む。
@@ -53,7 +59,11 @@ export function printAddress(address: CellAddress): string {
  *
  * **行は 1 始まり**（要件 F-1-3）。**正規化した結果が 0 なら解決できない**（ADR-0020）ので、
  * `A0` も `A000` も `#Ref` になる（§4.2）。
+ *
+ * **列の綴りも検査する。** 番地は構造型なので、呼び出し側は `parseAddress` を通さずに
+ * `{ column: 'A1', row: 2n }` のような値を組み立てられる。`printAddress` は連結するだけなので、
+ * **これを通すとシートのキーが `A12` になり、別のセルと衝突する**（AI レビューの指摘）。
  */
 export function isResolvable(address: CellAddress): boolean {
-  return address.row > 0n;
+  return COLUMN_SPELLING.test(address.column) && address.row > 0n;
 }
