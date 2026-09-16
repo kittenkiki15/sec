@@ -15,7 +15,11 @@ const main = join(dirname(fileURLToPath(import.meta.url)), 'main.ts');
 /** `sec` を起動する。終了コードが 0 でなくても投げずに返す。 */
 function run(...args: string[]): { stdout: string; stderr: string; status: number } {
   try {
-    const stdout = execFileSync(process.execPath, [main, ...args], { encoding: 'utf8' });
+    // stderr も受け取る。既定では親の stderr へ素通しになり、テストの出力が汚れる。
+    const stdout = execFileSync(process.execPath, [main, ...args], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     return { stdout, stderr: '', status: 0 };
   } catch (error) {
     const failure = error as { stdout: string; stderr: string; status: number };
