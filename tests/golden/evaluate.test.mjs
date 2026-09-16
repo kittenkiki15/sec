@@ -31,6 +31,8 @@ const COVERED = [
   'numbers.txt',
   'strings.txt',
   'booleans.txt',
+  'blocks.txt',
+  'conditionals.txt',
 ];
 
 /** ゴールデンテストの入力を評価器に渡す。マクロとシートはまだ無い。 */

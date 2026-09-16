@@ -62,14 +62,25 @@ export interface ArrayValue {
 }
 
 /**
+ * 識別子から値への束縛（§5.1）。**平らな表 1 つで足りる。**
+ * 外側と同じ名前を内側で宣言できない（§5.1、§7.5）ので、名前が衝突することがなく、
+ * 内と外を分けて持って**どちらを先に見るかを決める必要が無い**ためである。
+ */
+export type Environment = ReadonlyMap<string, ReceivedValue>;
+
+/**
  * ブロック（§5.1）。**評価を遅らせるための値**で、作るだけでは本体を評価しない。
  * 本体を木のまま持つのは、`value` を送られて初めて評価するため。
+ *
+ * **作られた時点の環境を捕まえる。** `[:x | [x + 1]] value: 2` の内側のブロックは、
+ * 外側の送信が終わった後に評価されても `x` を見られなければならない。
  */
 export interface BlockValue {
   readonly kind: 'block';
   /** 0〜2 個（要件 F-2-5）。数が合わない `value` の送信は `#TypeError`。 */
   readonly parameters: readonly string[];
   readonly body: Body;
+  readonly environment: Environment;
 }
 
 export interface ErrorValue {
