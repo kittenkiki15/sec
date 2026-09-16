@@ -100,12 +100,20 @@ function evaluate(
       return { kind: 'boolean', value: node.value };
     case 'nil':
       return { kind: 'nil' };
-    case 'array':
-      // リテラル配列の要素に識別子は現れない（§2.4）が、経路を分けない方が安い。
-      return {
-        kind: 'array',
-        elements: node.elements.map((element) => evaluate(element, environment, budget)),
-      };
+    // リテラル配列の要素に識別子は現れない（§2.4）が、経路を分けない方が安い。
+    case 'array': {
+      const elements: Value[] = [];
+      for (const element of node.elements) {
+        const value = evaluate(element, environment, budget);
+        // **予算切れは値ではなく打ち切りである**（§7.8）。要素に混ぜると、打ち切られた
+        // ことが式の値から読み取れなくなる。**要素の `#Overflow`（`#(1.0e400)`）とは
+        // 違う**ので、ここだけは種別を見て分ける。あちらは表せない値であって、
+        // 評価が途中で止まったわけではない。
+        if (value.kind === 'error' && value.error === 'Timeout') return value;
+        elements.push(value);
+      }
+      return { kind: 'array', elements };
+    }
     // 構文解析の段階で生じたエラー（倍精度に収まらない小数）。木に載っているものを
     // そのまま値にする（ADR-0013）。構文エラーではないので #Syntax ではない。
     case 'error':

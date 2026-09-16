@@ -519,6 +519,14 @@ describe('evaluateFormula の実行上限', () => {
     );
   });
 
+  // **予算切れは値ではなく打ち切りである。** リテラル配列の要素を評価している途中で
+  // 尽きたとき、#Timeout を要素に混ぜると「打ち切られた」ことが式の値から読み取れない。
+  // 要素の #Overflow（#(1.0e400)）とは違い、これは要素の値ではない。
+  it('リテラル配列の途中で尽きても、式全体が #Timeout になる', () => {
+    const huge = `#(${'1 '.repeat(1_000_100)})`;
+    expect(evaluateFormula(huge)).toEqual({ kind: 'error', error: 'Timeout' });
+  });
+
   // 予算は評価ごとに作り直す。使い切った評価が次の評価に影響しない。
   it('上限は 1 回の評価ごとに数え直す', () => {
     expect(evaluated('(1 to: 1e400) sum')).toBe('#Timeout');
