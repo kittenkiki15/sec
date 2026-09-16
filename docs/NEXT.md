@@ -25,9 +25,9 @@
   `Symbol` / `nil`）**（[#32](https://github.com/kittenkiki15/sec/issues/32)）**・
   段階 5（ブロックと条件式）**（[#34](https://github.com/kittenkiki15/sec/issues/34)）**・
   段階 6（`Array` / `Interval`）**（[#36](https://github.com/kittenkiki15/sec/issues/36)）**が終わった。**
-  **仕様書 §5 と §6.1・§6.2 と §6.3 の `Array` / `Interval` を閉じ、10 ファイル 556 件が緑**
+  **仕様書 §5 と §6.1・§6.2 と §6.3 の `Array` / `Interval` を閉じ、10 ファイル 559 件が緑**
   （`literals` 61 / `messages` 26 / `precedence` 16 / `errors` 20 / `numbers` 125 /
-  `strings` 67 / `booleans` 49 / `blocks` 23 / `conditionals` 36 / `collections` 133）。
+  `strings` 67 / `booleans` 49 / `blocks` 23 / `conditionals` 36 / `collections` 136）。
   **次は段階 7（CLI）**
 
 ## M0 の記録
@@ -177,15 +177,15 @@ M2 の完了条件は「**セル参照なしの式**が評価できる」（要�
 
 | 区分 | 件数 |
 | --- | --- |
-| M2 で緑にする | 576 |
+| M2 で緑にする | 579 |
 | M3 待ち（`!pending m3`） | 105 |
 | M4 待ち（`!pending m4`） | 60 |
 
 段階 0 の時点では 546 / 106 で、総数は 712 件だった。段階 2 で `errors.txt` の 1 件が
 **セル参照に到達しないまま緑になる**ことが分かり、M2 の側へ移った。段階 4 で
 `strings.txt` に 1 件足し（`'1.0e400' asNumber`）、段階 5 で `conditionals.txt` に
-4 件足し（引数の数の検査が及ぶ範囲）、段階 6 で `collections.txt` に 24 件足した
-（列挙のブロックの返り値、`sorted:` の安定性、配列の集計と `nil`）。
+4 件足し（引数の数の検査が及ぶ範囲）、段階 6 で `collections.txt` に 27 件足した
+（列挙のブロックの返り値、`sorted:` の安定性、配列の集計と `nil`、実行上限）。
 
 **保留は `!pending <マイルストーン>` の印でケースごとに表す**
 （[ADR-0019](adr/0019-golden-pending-directive.md)）。`collections.txt` が 109 / 46 で
@@ -202,7 +202,7 @@ M2 の完了条件は「**セル参照なしの式**が評価できる」（要�
 | 3 | `Number` のセレクタ（§6.1） | `numbers.txt` (125) | **済**（[#30](https://github.com/kittenkiki15/sec/issues/30)） |
 | 4 | `String` / `Boolean` / `Symbol` / `nil`（§6.2） | `strings.txt` (67) / `booleans.txt` (49) | **済**（[#32](https://github.com/kittenkiki15/sec/issues/32)） |
 | 5 | ブロックと条件式（§5） | `blocks.txt` (23) / `conditionals.txt` (36) | **済**（[#34](https://github.com/kittenkiki15/sec/issues/34)） |
-| 6 | `Array` / `Interval`（§6.3） | `collections.txt` (133) | **済**（[#36](https://github.com/kittenkiki15/sec/issues/36)） |
+| 6 | `Array` / `Interval`（§6.3） | `collections.txt` (136) | **済**（[#36](https://github.com/kittenkiki15/sec/issues/36)） |
 | 7 | CLI（`sec eval`） | — | 次 |
 
 括弧内は M2 で緑にする件数。**段階 1 でゴールデンテストの実行そのものを立ち上げた。**
@@ -331,7 +331,7 @@ M2 の完了条件は「**セル参照なしの式**が評価できる」（要�
 
 **仕様書が書いていなかった 2 点を利用者に確認して決めた。** ADR は立てていない
 （新しい論点ではなく、既存の規則の適用範囲の明示）。**§6.3 と付録 A に書き、
-`collections.txt` にケースを 24 件足した**（155 → 179 件）。
+`collections.txt` にケースを 27 件足した**（155 → 182 件）。
 
 - **列挙のブロックが真偽値以外を返せば `#TypeError`。** §7.6 が `whileTrue:` について
   「受け手が真偽値以外を返せば `#TypeError`」と既に定めており、同じ規則を
@@ -376,7 +376,7 @@ M2 の完了条件は「**セル参照なしの式**が評価できる」（要�
 
 現在の対象は `literals.txt` (61) / `messages.txt` (26) / `precedence.txt` (16) /
 `errors.txt` (20) / `numbers.txt` (125) / `strings.txt` (67) / `booleans.txt` (49) /
-`blocks.txt` (23) / `conditionals.txt` (36) / `collections.txt` (133) の **556 件**。
+`blocks.txt` (23) / `conditionals.txt` (36) / `collections.txt` (136) の **559 件**。
 `errors.txt` の残り 9 件、`blocks.txt` の 2 件、`conditionals.txt` の 3 件、
 `collections.txt` の 46 件はセル参照が要るので `!pending m3`。
 **残る M2 の 20 件**（`ranges.txt` 12 / `assignment.txt` 5 / `macros.txt` 3）**は
