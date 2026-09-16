@@ -1,13 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import { evaluateFormula } from './evaluate.ts';
-import { printValue } from './value.ts';
+import { printValue, type Value } from './value.ts';
+
+/** 原文を評価して値だけを取る。診断を見ないケースはこちらを使う。 */
+const evaluatedValue = (source: string): Value => evaluateFormula(source).value;
 
 /** 原文を評価し、§0.3 の表記にする。ゴールデンテストが見るのと同じ経路。 */
-const evaluated = (source: string): string => printValue(evaluateFormula(source));
+const evaluated = (source: string): string => printValue(evaluatedValue(source));
 
 describe('evaluateFormula のリテラル', () => {
   it('整数を値にする', () => {
-    expect(evaluateFormula('42')).toEqual({ kind: 'integer', value: 42n });
+    expect(evaluatedValue('42')).toEqual({ kind: 'integer', value: 42n });
     expect(evaluated('0')).toBe('0');
     expect(evaluated('-5')).toBe('-5');
   });
@@ -17,29 +20,29 @@ describe('evaluateFormula のリテラル', () => {
   });
 
   it('指数は仮数の種別を変えない（§2.1）', () => {
-    expect(evaluateFormula('1e3')).toEqual({ kind: 'integer', value: 1000n });
+    expect(evaluatedValue('1e3')).toEqual({ kind: 'integer', value: 1000n });
     expect(evaluated('1.5e3')).toBe('1500.0');
     expect(evaluated('2e-3')).toBe('0.002');
   });
 
   it('小数を値にする', () => {
-    expect(evaluateFormula('3.14')).toEqual({ kind: 'decimal', value: 3.14 });
+    expect(evaluatedValue('3.14')).toEqual({ kind: 'decimal', value: 3.14 });
   });
 
   it('文字列を値にする', () => {
-    expect(evaluateFormula("'hello'")).toEqual({ kind: 'string', value: 'hello' });
+    expect(evaluatedValue("'hello'")).toEqual({ kind: 'string', value: 'hello' });
     expect(evaluated("'It''s'")).toBe("'It''s'");
     expect(evaluated("''")).toBe("''");
   });
 
   it('シンボルを値にする', () => {
-    expect(evaluateFormula('#foo')).toEqual({ kind: 'symbol', value: 'foo' });
+    expect(evaluatedValue('#foo')).toEqual({ kind: 'symbol', value: 'foo' });
     expect(evaluated('#at:put:')).toBe('#at:put:');
     expect(evaluated("#'hello world'")).toBe("#'hello world'");
   });
 
   it('真偽値と nil を値にする', () => {
-    expect(evaluateFormula('true')).toEqual({ kind: 'boolean', value: true });
+    expect(evaluatedValue('true')).toEqual({ kind: 'boolean', value: true });
     expect(evaluated('false')).toBe('false');
     expect(evaluated('nil')).toBe('nil');
   });
@@ -63,7 +66,7 @@ describe('evaluateFormula のエラー', () => {
   // 要件 F-8-1: エラーは値である。例外にすると評価の途中で制御が飛び、
   // §6.0 の伝播順序を値の受け渡しで表せなくなる。
   it('構文エラーを例外ではなく #Syntax の値にする', () => {
-    expect(evaluateFormula('3 +')).toEqual({ kind: 'error', error: 'Syntax' });
+    expect(evaluatedValue('3 +')).toEqual({ kind: 'error', error: 'Syntax' });
     expect(evaluated('()')).toBe('#Syntax');
     expect(evaluated('(3 + 4')).toBe('#Syntax');
   });
@@ -81,7 +84,7 @@ describe('evaluateFormula のエラー', () => {
 
   it('倍精度に収まらない小数のリテラルは #Overflow（ADR-0013）', () => {
     // 構文エラーではないので、構文解析器が木に載せたものをそのまま値にする。
-    expect(evaluateFormula('1.0e400')).toEqual({ kind: 'error', error: 'Overflow' });
+    expect(evaluatedValue('1.0e400')).toEqual({ kind: 'error', error: 'Overflow' });
   });
 
   it('空の原文は #Syntax', () => {
@@ -486,7 +489,7 @@ describe('evaluateFormula の実行上限', () => {
   // 仕様外の例外（RangeError）を漏らさず、#Timeout の値にする（§7.8）。
   // **どの深さで尽きるかはスタックの大きさ次第なので、境界そのものは固定しない。**
   it('再帰が尽きる深さでは #Timeout を値として返す', () => {
-    expect(evaluateFormula(nested(100000))).toEqual({ kind: 'error', error: 'Timeout' });
+    expect(evaluatedValue(nested(100000))).toEqual({ kind: 'error', error: 'Timeout' });
   });
 
   it('例外を呼び出し元へ漏らさない', () => {
@@ -524,7 +527,7 @@ describe('evaluateFormula の実行上限', () => {
   // 要素の #Overflow（#(1.0e400)）とは違い、これは要素の値ではない。
   it('リテラル配列の途中で尽きても、式全体が #Timeout になる', () => {
     const huge = `#(${'1 '.repeat(1_000_100)})`;
-    expect(evaluateFormula(huge)).toEqual({ kind: 'error', error: 'Timeout' });
+    expect(evaluatedValue(huge)).toEqual({ kind: 'error', error: 'Timeout' });
   });
 
   // 予算は評価ごとに作り直す。使い切った評価が次の評価に影響しない。
@@ -542,7 +545,7 @@ describe('evaluateFormula の String（§6.2）', () => {
   });
 
   it('size と isEmpty を送る', () => {
-    expect(evaluateFormula("'abc' size")).toEqual({ kind: 'integer', value: 3n });
+    expect(evaluatedValue("'abc' size")).toEqual({ kind: 'integer', value: 3n });
     expect(evaluated("'' isEmpty")).toBe('true');
     expect(evaluated("'abc' isEmpty")).toBe('false');
   });
@@ -577,7 +580,7 @@ describe('evaluateFormula の String（§6.2）', () => {
   });
 
   it('asNumber が受理するのは §2.1 の数値リテラルの形ちょうど', () => {
-    expect(evaluateFormula("'007' asNumber")).toEqual({ kind: 'integer', value: 7n });
+    expect(evaluatedValue("'007' asNumber")).toEqual({ kind: 'integer', value: 7n });
     expect(evaluated("'1e3' asNumber")).toBe('1000');
     // 前後に空白やコメントが付けば形が一致しない。読めなければ nil でエラーではない。
     expect(evaluated("' 42' asNumber")).toBe('nil');

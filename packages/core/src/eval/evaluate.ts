@@ -38,6 +38,35 @@ export class NotImplementedError extends Error {
 }
 
 /**
+ * 構文エラーの位置と説明文（要件 F-8-3）。**`#Syntax` の値には載せない。**
+ *
+ * 載せると「同じ `#Syntax` でも位置が違えば別の値か」を決めることになるが、§6.0 は
+ * 「エラーはメッセージを受け取らない」としか定めていない。**値と組にして外へ出す**方が、
+ * 比較の意味論に手を触れずに済む。受け取り手は CLI と Web UI。
+ */
+export interface Diagnostic {
+  /** 字句の段階か構文の段階か。**利用者にはどちらも `#Syntax`** だが、報告する側には要る。 */
+  readonly phase: 'lexical' | 'parse';
+  /** 1 から数える行。 */
+  readonly line: number;
+  /** 1 から数える列。**コードポイントで数える**（字句解析器と揃える）。 */
+  readonly column: number;
+  /** 人間にも AI にも読める説明文（要件 F-8-3）。 */
+  readonly message: string;
+}
+
+/**
+ * 評価の結果。**値と診断の組**で、診断が付くのは構文エラーのときだけである。
+ *
+ * 実行時のエラー（`#DivideByZero` など）は位置を持たない。位置を持てるのは
+ * 構文解析までの段階だけで、**評価器は原文のどこを見ているかを追っていない。**
+ */
+export interface Evaluation {
+  readonly value: Value;
+  readonly diagnostic?: Diagnostic;
+}
+
+/**
  * 数式の原文を評価する。
  *
  * **字句エラーと構文エラーはどちらも `#Syntax` の値になる。** 利用者から見ると
@@ -46,17 +75,25 @@ export class NotImplementedError extends Error {
  * どちらも位置と説明文を持つが、字句の段階か構文の段階かは報告する側に要る（要件 F-8-3）。
  *
  * @param source 数式の原文（セルの `=` は含めない）
- * @returns 評価結果。エラーも値として返る
+ * @returns 値と診断の組。エラーも値として返る
  * @throws {NotImplementedError} まだ評価できないノードに当たった場合
  */
-export function evaluateFormula(source: string): Value {
+export function evaluateFormula(source: string): Evaluation {
   try {
     // 数式の最上位に束縛は無い。名前を導入できるのはブロックの引数だけである（§5.1）。
     // **予算は評価ごとに作り直す**ので、使い切った評価が次の評価に影響しない。
-    return evaluate(parseFormula(source), EMPTY_ENVIRONMENT, new StepBudget());
+    return { value: evaluate(parseFormula(source), EMPTY_ENVIRONMENT, new StepBudget()) };
   } catch (error) {
     if (error instanceof LexicalError || error instanceof ParseError) {
-      return { kind: 'error', error: 'Syntax' };
+      return {
+        value: { kind: 'error', error: 'Syntax' },
+        diagnostic: {
+          phase: error instanceof LexicalError ? 'lexical' : 'parse',
+          line: error.line,
+          column: error.column,
+          message: error.message,
+        },
+      };
     }
     // 深い入れ子は構文解析器と評価器のどちらの再帰も尽きさせうる。**どちらで尽きても
     // 仕様外の例外を漏らさない。** 超過した評価は `#Timeout`（§7.8）。
@@ -65,7 +102,7 @@ export function evaluateFormula(source: string): Value {
     // 持つが（要件 N-5、CLAUDE.md 規約 4）、**再帰の深さはステップ数では表せない。**
     // 1 ステップしか使わない式でも入れ子が深ければスタックが尽きるので、両方が要る。
     if (error instanceof RangeError) {
-      return { kind: 'error', error: 'Timeout' };
+      return { value: { kind: 'error', error: 'Timeout' } };
     }
     throw error;
   }

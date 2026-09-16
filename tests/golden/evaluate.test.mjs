@@ -40,7 +40,7 @@ const COVERED = [
 const evaluate = ({ source, sheet, kind }) => {
   if (kind === 'macro') throw new Error('未実装: マクロの評価はまだできません。');
   if (sheet.size > 0) throw new Error('未実装: シートの状態はまだ扱えません。');
-  return printValue(evaluateFormula(source));
+  return printValue(evaluateFormula(source).value);
 };
 
 describe('ゴールデンテストの評価', () => {
