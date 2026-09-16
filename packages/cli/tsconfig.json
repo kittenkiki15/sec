@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // CLI は Node の上で動くので、core と違って Node API に依存してよい
+    // （依存方向は core ← cli の一方向、要件 §7）。DOM は読み込まない。
+    "lib": ["ES2023"],
+    "types": ["node"]
+  },
+  "include": ["src/**/*.ts"]
+}
