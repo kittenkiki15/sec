@@ -23,11 +23,12 @@
   エラーの伝播順序）**（[#28](https://github.com/kittenkiki15/sec/issues/28)）**・段階 3
   （`Number` のセレクタ）**（[#30](https://github.com/kittenkiki15/sec/issues/30)）**・段階 4（`String` / `Boolean` /
   `Symbol` / `nil`）**（[#32](https://github.com/kittenkiki15/sec/issues/32)）**・
-  段階 5（ブロックと条件式）**（[#34](https://github.com/kittenkiki15/sec/issues/34)）**が終わった。**
-  **仕様書 §5 と §6.1・§6.2 を閉じ、9 ファイル 423 件が緑**（`literals` 61 / `messages` 26 /
-  `precedence` 16 / `errors` 20 / `numbers` 125 / `strings` 67 / `booleans` 49 /
-  `blocks` 23 / `conditionals` 36）。
-  **次は段階 6（`Array` / `Interval`、§6.3）**
+  段階 5（ブロックと条件式）**（[#34](https://github.com/kittenkiki15/sec/issues/34)）**・
+  段階 6（`Array` / `Interval`）**（[#36](https://github.com/kittenkiki15/sec/issues/36)）**が終わった。**
+  **仕様書 §5 と §6.1・§6.2 と §6.3 の `Array` / `Interval` を閉じ、10 ファイル 556 件が緑**
+  （`literals` 61 / `messages` 26 / `precedence` 16 / `errors` 20 / `numbers` 125 /
+  `strings` 67 / `booleans` 49 / `blocks` 23 / `conditionals` 36 / `collections` 133）。
+  **次は段階 7（CLI）**
 
 ## M0 の記録
 
@@ -176,14 +177,15 @@ M2 の完了条件は「**セル参照なしの式**が評価できる」（要�
 
 | 区分 | 件数 |
 | --- | --- |
-| M2 で緑にする | 552 |
+| M2 で緑にする | 576 |
 | M3 待ち（`!pending m3`） | 105 |
 | M4 待ち（`!pending m4`） | 60 |
 
 段階 0 の時点では 546 / 106 で、総数は 712 件だった。段階 2 で `errors.txt` の 1 件が
 **セル参照に到達しないまま緑になる**ことが分かり、M2 の側へ移った。段階 4 で
 `strings.txt` に 1 件足し（`'1.0e400' asNumber`）、段階 5 で `conditionals.txt` に
-4 件足した（引数の数の検査が及ぶ範囲）。
+4 件足し（引数の数の検査が及ぶ範囲）、段階 6 で `collections.txt` に 24 件足した
+（列挙のブロックの返り値、`sorted:` の安定性、配列の集計と `nil`）。
 
 **保留は `!pending <マイルストーン>` の印でケースごとに表す**
 （[ADR-0019](adr/0019-golden-pending-directive.md)）。`collections.txt` が 109 / 46 で
@@ -200,8 +202,8 @@ M2 の完了条件は「**セル参照なしの式**が評価できる」（要�
 | 3 | `Number` のセレクタ（§6.1） | `numbers.txt` (125) | **済**（[#30](https://github.com/kittenkiki15/sec/issues/30)） |
 | 4 | `String` / `Boolean` / `Symbol` / `nil`（§6.2） | `strings.txt` (67) / `booleans.txt` (49) | **済**（[#32](https://github.com/kittenkiki15/sec/issues/32)） |
 | 5 | ブロックと条件式（§5） | `blocks.txt` (23) / `conditionals.txt` (36) | **済**（[#34](https://github.com/kittenkiki15/sec/issues/34)） |
-| 6 | `Array` / `Interval`（§6.3） | `collections.txt` (109) | 次 |
-| 7 | CLI（`sec eval`） | — | |
+| 6 | `Array` / `Interval`（§6.3） | `collections.txt` (133) | **済**（[#36](https://github.com/kittenkiki15/sec/issues/36)） |
+| 7 | CLI（`sec eval`） | — | 次 |
 
 括弧内は M2 で緑にする件数。**段階 1 でゴールデンテストの実行そのものを立ち上げた。**
 
@@ -325,6 +327,39 @@ M2 の完了条件は「**セル参照なしの式**が評価できる」（要�
   §5.2 の表にある**ためで、`conditionals.txt` が緑になる条件に入っている。
   §6.3 の残りのセレクタは段階 6
 
+### 段階 6 で決めたこと
+
+**仕様書が書いていなかった 2 点を利用者に確認して決めた。** ADR は立てていない
+（新しい論点ではなく、既存の規則の適用範囲の明示）。**§6.3 と付録 A に書き、
+`collections.txt` にケースを 24 件足した**（155 → 179 件）。
+
+- **列挙のブロックが真偽値以外を返せば `#TypeError`。** §7.6 が `whileTrue:` について
+  「受け手が真偽値以外を返せば `#TypeError`」と既に定めており、同じ規則を
+  `select:` / `reject:` / `detect:ifNone:` / `sorted:` に当てた。**この言語は `false` 以外を
+  真とみなす経路をどこにも持たない**（`false and: 1` も `#TypeError`）
+- **`sorted:` は安定とする。** 決定性が要件（F-4-4）である以上、同順の要素の並びも
+  定まっていなければならない。**実行環境の `sort` に任せると**、比較が不整合な
+  ブロック（`[:a :b | true]`）を渡されたときの結果が**整列法ごとに変わる**
+
+**配列の集計が値 `nil` の要素を無視するケースも足した。** ADR-0010 と §6.3 の表は
+クラスを限らずそう定めているが、フィクスチャは範囲の空セルでしか確かめていなかった。
+
+**実装で決めたこと。**
+
+- **`Array` と `Interval` の演算を 1 箇所にまとめた**（`sequence.ts`）。2 つ目なので
+  まとめた（CLAUDE.md の「2 回目に必要になるまで抽象化しない」）。**`Range` が 3 つ目として
+  M3 で乗る。** そのときは要素が `Cell` になり、**集計の前に値へ解決する段が要る**
+- **要素を並べるのは集計と列挙だけにした。** `size` / `isEmpty` / `at:` / `first` / `last` は
+  個数と位置だけで決まるので、**`1 to: 1e400` のような区間にも答えられる。**
+  区間どうしの `=` も要素を並べない（下端と個数が一致することは、要素がすべて等しいことと
+  同じである）。**個数が極端に大きい区間を列挙したときの打ち切りは要件 N-5**（#27）
+- **`sorted:` は自前の併合整列。** 実行環境の `sort` は比較が不整合な述語に対して
+  結果がエンジン依存になる。**併合整列なら比較の順序と結果がどの述語に対しても定まる**
+- **等価性は 1 箇所（`isEqual`）のまま、要素どうしの比較を受け取る形にした。**
+  そのため受け手だけでなく**要素**も比べることになり、ブロックとエラーが現れうる。
+  どちらも `=` を持たないが **`=` はエラーにならない**（§6.3 の表）ので、
+  ブロックは等しくないとみなし、エラーは種別で比べる（下の「積んであるもの」）
+
 ### ゴールデンテストの実行
 
 `tests/golden/evaluate.test.mjs` が実行する。**対象のファイルは段階ごとに増やす**
@@ -332,9 +367,11 @@ M2 の完了条件は「**セル参照なしの式**が評価できる」（要�
 
 現在の対象は `literals.txt` (61) / `messages.txt` (26) / `precedence.txt` (16) /
 `errors.txt` (20) / `numbers.txt` (125) / `strings.txt` (67) / `booleans.txt` (49) /
-`blocks.txt` (23) / `conditionals.txt` (36) の **423 件**。
-`errors.txt` の残り 9 件、`blocks.txt` の 2 件、`conditionals.txt` の 3 件は
-セル参照が要るので `!pending m3`。
+`blocks.txt` (23) / `conditionals.txt` (36) / `collections.txt` (133) の **556 件**。
+`errors.txt` の残り 9 件、`blocks.txt` の 2 件、`conditionals.txt` の 3 件、
+`collections.txt` の 46 件はセル参照が要るので `!pending m3`。
+**残る M2 の 20 件**（`ranges.txt` 12 / `assignment.txt` 5 / `macros.txt` 3）**は
+構文エラーを期待するケースで、対応する M3 / M4 の段階で対象に足す。**
 **`strings.txt` と `booleans.txt` は保留のケースを 1 件も持たない**（どちらも全件が
 セル参照もマクロも使わない）。
 
@@ -343,6 +380,14 @@ M2 の完了条件は「**セル参照なしの式**が評価できる」（要�
 （受け手のエラーで打ち切られるため `A0` に到達せず、セル参照が無くても緑になる）。
 
 ## 積んであるもの（急がない）
+
+- **リテラル配列の要素がエラーになりうる。** `#(1.0e400)` は `#(#Overflow)` と表記され、
+  **エラーを要素に持つ配列**になる（§2.1 が倍精度に収まらない小数を `#Overflow` とし、
+  §2.4 のリテラル配列がそれを要素として抱えるため）。**仕様書はこの形に触れていない。**
+  段階 6 の実装は、**集計と列挙ではそのエラーを式全体の値にし**（§6.0）、
+  **`=` では種別で比べる**（`=` はエラーにならないと §6.3 が定めているため）ことにした。
+  **本来は「リテラル配列そのものが `#Overflow` になる」方が筋が良い**かもしれない。
+  フィクスチャが 1 件も持たないので先送りした。決めるのは要るときでよい
 
 - **明示的な実行上限（ステップ数・時間・再帰深度）が未実装**
   （[#27](https://github.com/kittenkiki15/sec/issues/27)）。
