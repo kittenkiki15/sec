@@ -864,3 +864,47 @@ describe('evaluateFormula の Interval（§6.3、ADR-0016）', () => {
     expect(evaluated("(1 to: 5) ifEmpty: ['空']")).toBe('1 to: 5');
   });
 });
+
+describe('evaluateFormula の診断（要件 F-8-3）', () => {
+  // 値の側は #Syntax のまま（位置が違っても同じ値）で、位置と説明文は組の片割れに載る。
+  // ErrorValue に載せると「同じ #Syntax でも位置が違えば別の値か」を決めることになるが、
+  // §6.0 は「エラーはメッセージを受け取らない」としか定めていない。
+  it('構文エラーは値と診断の組になる', () => {
+    const { value, diagnostic } = evaluateFormula('3 +');
+    expect(value).toEqual({ kind: 'error', error: 'Syntax' });
+    expect(diagnostic).toEqual({
+      phase: 'parse',
+      line: 1,
+      column: 4,
+      message: expect.stringContaining('式がありません'),
+    });
+  });
+
+  // 字句の段階か構文の段階かは、利用者には区別が無くても報告する側に要る。
+  it('字句エラーは phase が lexical になる', () => {
+    const { value, diagnostic } = evaluateFormula("'abc");
+    expect(value).toEqual({ kind: 'error', error: 'Syntax' });
+    expect(diagnostic?.phase).toBe('lexical');
+    expect(diagnostic?.line).toBe(1);
+    expect(diagnostic?.column).toBe(1);
+  });
+
+  it('位置は行と列で、2 行目以降も指せる', () => {
+    const { diagnostic } = evaluateFormula('3\n+ $');
+    expect(diagnostic).toMatchObject({ phase: 'lexical', line: 2, column: 3 });
+  });
+
+  it('構文エラーでなければ診断は無い', () => {
+    // 値も併せて見る。診断だけを見ると、組になっていない戻り値に対しても通ってしまう。
+    const { value, diagnostic } = evaluateFormula('3 + 4');
+    expect(value).toEqual({ kind: 'integer', value: 7n });
+    expect(diagnostic).toBeUndefined();
+  });
+
+  // 評価の途中で出たエラーは位置を持たない。持てるのは構文解析までの段階だけである。
+  it('実行時のエラーにも診断は無い', () => {
+    const { value, diagnostic } = evaluateFormula('1 / 0');
+    expect(value).toEqual({ kind: 'error', error: 'DivideByZero' });
+    expect(diagnostic).toBeUndefined();
+  });
+});
