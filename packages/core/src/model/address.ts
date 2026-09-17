@@ -82,3 +82,48 @@ export function compareColumns(left: string, right: string): number {
   if (left === right) return 0;
   return left < right ? -1 : 1;
 }
+
+/** 双射基数 26 の基数。`A`〜`Z` の 26 文字で、**0 にあたる桁が無い。** */
+const COLUMN_BASE = 26n;
+
+const LETTER_A = 'A'.charCodeAt(0);
+
+/**
+ * 列の綴りを 1 始まりの位置にする。**範囲の列挙（§6.3）が要る。**
+ *
+ * **綴りのままでは隣の列を求められない。** 列挙は左から右へ 1 列ずつ進むが、
+ * `Z` の次は `AA` で、文字を 1 つ足す桁上がりが起きる。位置に直せばただの加算になる。
+ *
+ * **位置の大小は `compareColumns` と一致する。** 双射基数 26 は 0 にあたる桁を
+ * 持たないので、綴りが長いほど位置が大きい。
+ *
+ * @param column 列の綴り（`A`、`AA`）。**大文字であることは呼び出し側が保証する**
+ * @returns 1 始まりの位置（`A` が 1、`AA` が 27）
+ */
+export function columnIndex(column: string): bigint {
+  let index = 0n;
+  for (const letter of column) {
+    index = index * COLUMN_BASE + BigInt(letter.charCodeAt(0) - LETTER_A + 1);
+  }
+  return index;
+}
+
+/**
+ * 位置から列の綴りに戻す。`columnIndex` の逆。
+ *
+ * **桁を取り出す前に 1 を引く。** 双射基数 26 には 0 にあたる桁が無いため、
+ * 素朴に剰余を取ると `Z`（26）が桁上がりして `A@` のような綴りになる。
+ *
+ * @param index 1 始まりの位置
+ * @returns 列の綴り
+ */
+export function columnAt(index: bigint): string {
+  let remaining = index;
+  let spelling = '';
+  while (remaining > 0n) {
+    remaining -= 1n;
+    spelling = String.fromCharCode(LETTER_A + Number(remaining % COLUMN_BASE)) + spelling;
+    remaining /= COLUMN_BASE;
+  }
+  return spelling;
+}

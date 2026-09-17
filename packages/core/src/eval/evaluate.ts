@@ -295,7 +295,9 @@ function sendToCell(
   // であって、`#DoesNotUnderstand` ではない（§6.0 の検査の順序）。
   // **受け手がセルである以上、`to:` は理解している。**
   if (selector === 'to:' && args.length === 1) {
-    return first.kind === 'cell' ? makeRange(cell.address, first.address) : TYPE_ERROR;
+    // **値を引く手段は受け手から渡す。** 範囲の列挙が渡す要素は `Cell` なので（§6.3）、
+    // 矩形の中のどの番地についても同じものが要る。
+    return first.kind === 'cell' ? makeRange(cell.address, first.address, cell.values) : TYPE_ERROR;
   }
 
   return null;

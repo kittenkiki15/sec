@@ -118,8 +118,9 @@ describe('evaluateFormula のセル参照（§4.2）', () => {
 describe('evaluateFormula の範囲（§4.3）', () => {
   // 矩形の正規化と表記はゴールデンテスト（ranges.txt）が網羅している。ここに置くのは
   // **値としての形**と、シートを渡さなくても作れること（範囲はセルの値を読まない）である。
+  // 値を引く手段も持つ（§6.3 の列挙が要る）が、矩形はそれを見ずに決まる。
   it('Cell>>to: が範囲を返す。両端に値が入っていなくてもよい', () => {
-    expect(evaluatedValue('A1 to: B2')).toEqual({
+    expect(evaluatedValue('A1 to: B2')).toMatchObject({
       kind: 'range',
       topLeft: { column: 'A', row: 1n },
       bottomRight: { column: 'B', row: 2n },

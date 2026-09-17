@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { compareColumns, isResolvable, parseAddress, printAddress } from './address.ts';
+import {
+  columnAt,
+  columnIndex,
+  compareColumns,
+  isResolvable,
+  parseAddress,
+  printAddress,
+} from './address.ts';
 
 describe('parseAddress', () => {
   it('列の綴りと行の数値に分ける', () => {
@@ -98,5 +105,46 @@ describe('compareColumns', () => {
   it('同じ綴りは 0', () => {
     expect(compareColumns('A', 'A')).toBe(0);
     expect(compareColumns('ZZ', 'ZZ')).toBe(0);
+  });
+});
+
+describe('columnIndex と columnAt', () => {
+  // 範囲の列挙（§6.3）が列を左から右へ進める。綴りのままでは足せない。
+  it('列の綴りを 1 始まりの位置にする', () => {
+    expect(columnIndex('A')).toBe(1n);
+    expect(columnIndex('Z')).toBe(26n);
+    expect(columnIndex('AA')).toBe(27n);
+    expect(columnIndex('AB')).toBe(28n);
+    expect(columnIndex('ZZ')).toBe(702n);
+    expect(columnIndex('AAA')).toBe(703n);
+  });
+
+  it('位置から列の綴りに戻す', () => {
+    expect(columnAt(1n)).toBe('A');
+    expect(columnAt(26n)).toBe('Z');
+    expect(columnAt(27n)).toBe('AA');
+    expect(columnAt(28n)).toBe('AB');
+    expect(columnAt(702n)).toBe('ZZ');
+    expect(columnAt(703n)).toBe('AAA');
+  });
+
+  // 双射基数 26 は 0 にあたる桁を持たない。`Z` の次が `AA` になるのはそのため。
+  it('綴りと位置は 1 対 1 に対応する', () => {
+    for (let index = 1n; index <= 1000n; index += 1n) {
+      expect(columnIndex(columnAt(index))).toBe(index);
+    }
+  });
+
+  it('綴りの長さに上限は無い（§4.1 は列の文字数を制限していない）', () => {
+    expect(columnIndex('AAAAAAAAAA')).toBe(5646683826135n);
+    expect(columnAt(5646683826135n)).toBe('AAAAAAAAAA');
+  });
+
+  // 大小の判定（`compareColumns`）と位置の大小は同じでなければならない。
+  // 食い違うと、正規化した矩形の左上が右下より右になる。
+  it('位置の大小は compareColumns と一致する', () => {
+    expect(columnIndex('Z') < columnIndex('AA')).toBe(true);
+    expect(columnIndex('ZZ') < columnIndex('AAA')).toBe(true);
+    expect(columnIndex('AA') < columnIndex('AB')).toBe(true);
   });
 });

@@ -371,8 +371,8 @@ function sendToBlock(
 }
 
 /**
- * 並びを持つ値のセレクタ（§6.3）。**`Array` と `Interval` は同じセレクタを理解する。**
- * 違うのは要素の正体だけなので、振り分けも 1 つで足りる。**`Range` は M3 でここへ入る。**
+ * 並びを持つ値のセレクタ（§6.3）。**`Array` / `Range` / `Interval` は同じセレクタを
+ * 理解する。** 違うのは要素の正体だけなので、振り分けも 1 つで足りる。
  *
  * **演算は `sequence.ts` が持つ。** ここにあるのは引数の型の検査だけである。
  */
@@ -424,12 +424,18 @@ function sendToSequence(
         return withBlock(first, (block) => filterWith(receiver, block, invoke, false, budget));
       case 'sorted:':
         return withBlock(first, (block) => sortWith(receiver, block, invoke, budget));
-      // 空になりうるものは String（§6.2）と Array / Interval（§6.3）。Range は空にならない。
+      // 空になりうるものは String（§6.2）と Array / Interval（§6.3）。
       // ifEmpty: は §6.3 ではなく条件式として §5.2 の表にある。
+      //
+      // **範囲は空にならないので受け手になれない**（§6.3）。理解させて受け手をそのまま
+      // 返す形でも同じ値になるが、**空になりうる型の一覧が仕様と食い違う。**
+      // 常に偽になる条件を書けることは、書き手にとって誤りの合図である。
       case 'ifEmpty:':
-        return withBlock(first, (block) =>
-          sequenceSize(receiver) === 0n ? invoke(block, []) : receiver,
-        );
+        return receiver.kind === 'range'
+          ? undefined
+          : withBlock(first, (block) =>
+              sequenceSize(receiver) === 0n ? invoke(block, []) : receiver,
+            );
       default:
         return undefined;
     }
@@ -514,10 +520,9 @@ function dispatch(
     case 'array':
     case 'interval':
       return sendToSequence(receiver, selector, args, invoke, budget);
-    // **範囲の列挙と集計は M3 段階 4。** ここで理解しないセレクタは
-    // `#DoesNotUnderstand` になるが、それは仕様上ありうる値でもある（`A1:B2 -3`）。
+    // 上の 2 つと同じ並びだが、**`ifEmpty:` だけ受け手になれない**（§6.3）。
     case 'range':
-      return undefined;
+      return sendToSequence(receiver, selector, args, invoke, budget);
     // **セルは受け手として届かない。** `Cell` 自身が理解するセレクタは `evaluate.ts` が
     // 先に処理し（§4.2 の規則 1）、それ以外は保持する値へ置き換えられてから送られる（規則 2）。
     case 'cell':

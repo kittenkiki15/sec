@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { printValue, type Value } from './value.ts';
+import { type CellValues, printValue, type Value } from './value.ts';
 
 const integer = (value: bigint): Value => ({ kind: 'integer', value });
 const decimal = (value: number): Value => ({ kind: 'decimal', value });
 const string = (value: string): Value => ({ kind: 'string', value });
 const symbol = (value: string): Value => ({ kind: 'symbol', value });
 const array = (...elements: Value[]): Value => ({ kind: 'array', elements });
+/** 範囲は値を引く手段を持つ（§6.3 の列挙が要る）が、**表記には関わらない。** */
+const noCells: CellValues = () => ({ kind: 'nil' });
 
 describe('printValue の整数', () => {
   it('小数点を付けない', () => {
@@ -183,6 +185,7 @@ describe('printValue の範囲', () => {
         kind: 'range',
         topLeft: { column: 'A', row: 1n },
         bottomRight: { column: 'B', row: 10n },
+        values: noCells,
       }),
     ).toBe('A1 to: B10');
   });
@@ -193,6 +196,7 @@ describe('printValue の範囲', () => {
         kind: 'range',
         topLeft: { column: 'A', row: 1n },
         bottomRight: { column: 'A', row: 1n },
+        values: noCells,
       }),
     ).toBe('A1 to: A1');
   });
