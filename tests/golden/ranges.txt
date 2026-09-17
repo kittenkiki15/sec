@@ -7,47 +7,38 @@
 "--- 正準形 ---
 
 "Cell>>to: が Range を返す。表記は正準形と同じ（ADR-0007）
-!pending m3
 A1 to: A3
 => A1 to: A3
 
 "矩形も書ける
-!pending m3
 A1 to: B2
 => A1 to: B2
 
 "1 つのセルだけの範囲
-!pending m3
 A1 to: A1
 => A1 to: A1
 
 "正準形は通常の空白規則に従う。キーワードと引数の間の空白は省ける（§1.4）
-!pending m3
 A1 to:A3
 => A1 to: A3
 
 "--- 糖衣 ---
 
 "構文解析の時点で to: の送信へ脱糖するので、結果は正準形と同じ（ADR-0007）
-!pending m3
 A1..A3
 => A1 to: A3
 
-!pending m3
 A1:A3
 => A1 to: A3
 
-!pending m3
 A1..B2
 => A1 to: B2
 
-!pending m3
 A1:B2
 => A1 to: B2
 
 "範囲トークンも一次式の終端なので、その後の - は二項セレクタになる（§2.1）。
 "Range は - を理解しないため #DoesNotUnderstand であり、#Syntax ではない
-!pending m3
 A1:B2 -3
 => #DoesNotUnderstand
 
@@ -83,27 +74,34 @@ A3
 "--- 向きの正規化 ---
 
 "右下から左上へ書いても同じ矩形を指す
-!pending m3
 A3 to: A1
 => A1 to: A3
 
-!pending m3
 B2 to: A1
 => A1 to: B2
 
 "行と列で向きが別々でも正規化される
-!pending m3
 B1 to: A2
 => A1 to: B2
 
 "糖衣でも同じ
-!pending m3
 A3..A1
 => A1 to: A3
 
-!pending m3
 A3:A1
 => A1 to: A3
+
+"列の順序は双射基数 26（Z の次が AA）であって辞書順ではない（ADR-0020）
+AA1 to: Z1
+=> Z1 to: AA1
+
+"行は数値として比べる。綴りの長さでは決まらない
+A10 to: A9
+=> A9 to: A10
+
+"両端も正規化した番地で書く。前ゼロは落ちる（ADR-0020）
+A007 to: A3
+=> A3 to: A7
 
 "--- キーワードメッセージとの区別 ---
 
@@ -134,3 +132,11 @@ A1..5
 "範囲の範囲は作れない
 A1..B2..C3
 => #Syntax
+
+"正準形は通常のキーワード送信なので構文は通る。引数がセルでなければ #TypeError（§6.3）
+A1 to: 5
+=> #TypeError
+
+"範囲は to: を理解しない。糖衣の A1..B2..C3 が #Syntax なのとは別の経路
+(A1 to: A2) to: A3
+=> #DoesNotUnderstand

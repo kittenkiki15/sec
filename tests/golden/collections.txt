@@ -263,11 +263,9 @@ A1..A1 isEmpty
 => false
 
 "同じ矩形なら等しい。正規化した後で比べる（§4.3）
-!pending m3
 A1..B2 = (B2..A1)
 => true
 
-!pending m3
 A1..A3 = (A1..A2)
 => false
 

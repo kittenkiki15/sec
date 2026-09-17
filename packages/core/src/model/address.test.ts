@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isResolvable, parseAddress, printAddress } from './address.ts';
+import { compareColumns, isResolvable, parseAddress, printAddress } from './address.ts';
 
 describe('parseAddress', () => {
   it('列の綴りと行の数値に分ける', () => {
@@ -78,5 +78,25 @@ describe('isResolvable', () => {
     expect(isResolvable({ column: '', row: 1n })).toBe(false);
     expect(isResolvable({ column: 'a', row: 1n })).toBe(false);
     expect(isResolvable({ column: 'A ', row: 1n })).toBe(false);
+  });
+});
+
+describe('compareColumns', () => {
+  // 範囲の正規化（§4.3）が列の大小を要る。**辞書順ではない。**
+  it('綴りが短い列が先。双射基数 26 には前ゼロにあたる綴りが無い（ADR-0020）', () => {
+    expect(compareColumns('Z', 'AA')).toBe(-1);
+    expect(compareColumns('AA', 'Z')).toBe(1);
+    expect(compareColumns('ZZ', 'AAA')).toBe(-1);
+  });
+
+  it('綴りの長さが同じなら辞書順', () => {
+    expect(compareColumns('A', 'B')).toBe(-1);
+    expect(compareColumns('B', 'A')).toBe(1);
+    expect(compareColumns('AB', 'AA')).toBe(1);
+  });
+
+  it('同じ綴りは 0', () => {
+    expect(compareColumns('A', 'A')).toBe(0);
+    expect(compareColumns('ZZ', 'ZZ')).toBe(0);
   });
 });
