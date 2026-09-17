@@ -458,6 +458,33 @@ A1..A3 collect: 1
 (A1..A3 collect: [:c | c]) = #(1 2 3)
 => true
 
+"セルは真偽値ではないので、そのままでは条件にならない（§6.3）。
+"委譲は送信に対する規則であって、ブロックの値を条件として読むのは送信ではない
+!A1 := true
+!A3 := false
+A1..A3 select: [:c | c]
+=> #TypeError
+
+"isTrue を送れば条件にできる。空セル（A2）の値は nil なので false になる
+!A1 := true
+!A3 := false
+A1..A3 select: [:c | c isTrue]
+=> #(true)
+
+!A1 := true
+!A3 := false
+A1..A3 reject: [:c | c isTrue]
+=> #(nil false)
+
+"Cell 自身のセレクタではないので、値の配列にも同じように使える
+#(true false nil 1) select: [:v | v isTrue]
+=> #(true)
+
+"detect:ifNone: の条件にも使える
+!A2 := true
+(A1..A3 detect: [:c | c isTrue] ifNone: [nil]) value
+=> true
+
 "--- 範囲と空セル ---
 
 "集計は空セルを無視する（ADR-0010）

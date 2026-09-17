@@ -103,6 +103,59 @@ true | nil
 'abc' not
 => #DoesNotUnderstand
 
+"--- isTrue ---
+
+"受け手が true のときだけ真（§6.2）
+true isTrue
+=> true
+
+false isTrue
+=> false
+
+"isTrue はすべての値が理解する。真偽値でない値は真ではない
+nil isTrue
+=> false
+
+1 isTrue
+=> false
+
+0 isTrue
+=> false
+
+'' isTrue
+=> false
+
+'true' isTrue
+=> false
+
+#(1) isTrue
+=> false
+
+"= true と同じ答えを返す。読みやすさのための短縮形である
+1 = true
+=> false
+
+true = true
+=> true
+
+"ブロックだけは = を持たない（§5.1）ので、そこだけ = true と答えが揃わない
+[1] isTrue
+=> false
+
+[1] = true
+=> #DoesNotUnderstand
+
+"引数の側なら差は出ない。= を持たないのは受け手としてのブロックである
+true = [1]
+=> false
+
+"「false 以外を真とみなす」規則ではない。条件として読む側は真偽値を要求したまま
+1 ifTrue: ['真']
+=> #DoesNotUnderstand
+
+1 and: [true]
+=> #DoesNotUnderstand
+
 "--- nil ---
 
 nil isNil

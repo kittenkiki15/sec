@@ -459,7 +459,8 @@ function sendToSequence(
  *
  * **`isNil` / `notNil` / `ifNil:` はすべての値が理解する。** `nil` かどうかを調べるのに
  * 受け手を選ばずに済む必要があるためで、クラスごとに書くと**足し忘れた 1 つが
- * `#DoesNotUnderstand` になる**。`=` と `~=` も同じ形をどのクラスも持つ（§6.1〜6.3）ので
+ * `#DoesNotUnderstand` になる**。**`isTrue` も同じ理由でここにある**（§6.2）。
+ * `=` と `~=` も同じ形をどのクラスも持つ（§6.1〜6.3）ので
  * ここに置くが、**要素で比べる `Array` / `Interval` は §6.3（段階 6）で別に足す。**
  */
 function sendToAny(
@@ -476,6 +477,17 @@ function sendToAny(
         return boolean(receiver.kind === 'nil');
       case 'notNil':
         return boolean(receiver.kind !== 'nil');
+      // **受け手が `true` のときだけ真**（§6.2）。真偽値でない値は真ではない。
+      //
+      // **これは「`false` 以外を真とみなす」経路ではない。** 条件として読む側の規則は
+      // 変わらず、真偽値でなければ `#TypeError` である（§6.3、`condition`）。
+      // `isTrue` は明示的な問い合わせで、**セルを条件に使う手段**がこれである——
+      // `Cell` は真偽値ではないので、`select: [:c | c]` は `#TypeError` のまま。
+      //
+      // **受け手を選ばないのは `isNil` と同じ理由。** `Cell` 自身のセレクタにすると、
+      // §4.2 の規則 1 の一覧が増えて委譲の境界が広がり、値の配列には使えなくなる。
+      case 'isTrue':
+        return boolean(receiver.kind === 'boolean' && receiver.value);
       default:
         return undefined;
     }
