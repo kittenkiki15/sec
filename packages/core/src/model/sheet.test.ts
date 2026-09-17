@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { CellAddress } from './address.ts';
-import { parseAddress } from './address.ts';
+import { parseAddress, printAddress } from './address.ts';
 import { Sheet } from './sheet.ts';
 
 /** テストの中でだけ使う。綴りが番地の形であることは `address.test.ts` が見ている。 */
@@ -74,5 +74,25 @@ describe('Sheet', () => {
   it('解決できない番地は常に空。読むことはできる', () => {
     const sheet = new Sheet();
     expect(sheet.contentAt(at('A0'))).toBe('');
+  });
+});
+
+describe('Sheet の番地の列挙（要件 F-4-1）', () => {
+  it('新しいシートは番地を 1 つも持たない', () => {
+    expect(new Sheet().addresses()).toEqual([]);
+  });
+
+  it('内容を置いたセルの番地を答える。綴りは正規化されている（ADR-0020）', () => {
+    const sheet = new Sheet();
+    sheet.put(at('A007'), '1');
+    sheet.put(at('B2'), '=A7 + 1');
+    expect(sheet.addresses().map(printAddress).sort()).toEqual(['A7', 'B2']);
+  });
+
+  it('空にしたセルの番地は残らない（ADR-0010）', () => {
+    const sheet = new Sheet();
+    sheet.put(at('A1'), '1');
+    sheet.put(at('A1'), '');
+    expect(sheet.addresses()).toEqual([]);
   });
 });

@@ -16,7 +16,7 @@ const dependenciesOf = (source: string): string[] =>
 describe('staticDependencies（要件 F-4-1）', () => {
   it('セル参照を含まない数式は何にも依存しない', () => {
     expect(dependenciesOf('1 + 2')).toEqual([]);
-    expect(dependenciesOf("#(1 2) inject: 0 into: [:a :b | a + b]")).toEqual([]);
+    expect(dependenciesOf('#(1 2) inject: 0 into: [:a :b | a + b]')).toEqual([]);
   });
 
   it('セル参照はそのセルへの依存になる', () => {
@@ -50,8 +50,10 @@ describe('staticDependencies（要件 F-4-1）', () => {
     expect(dependenciesOf('true ifTrue: [A1] ifFalse: [B2]')).toEqual(['A1', 'B2']);
   });
 
-  it('リテラル配列の中の綴りはシンボルであってセル参照ではない（§2.4）', () => {
-    expect(dependenciesOf('#(A1)')).toEqual([]);
+  // セル参照そのものは要素になれない（§2.4 が構文エラーにする）ので、
+  // **リテラル配列から依存が出ることはない。** 裸の綴りはシンボルである。
+  it('リテラル配列は何にも依存しない（§2.4）', () => {
+    expect(dependenciesOf('#(1 abc) size')).toEqual([]);
   });
 
   it('解決できない番地は依存にならない。値は #Ref で、読むセルが無い（§4.2）', () => {

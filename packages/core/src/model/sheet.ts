@@ -12,8 +12,29 @@
 import { type CellAddress, isResolvable, printAddress } from './address.ts';
 
 export class Sheet {
-  /** 正規化した番地の綴り → 内容の原文。**空のセルは持たない**（下記 `put`）。 */
-  readonly #contents = new Map<string, string>();
+  /**
+   * 正規化した番地の綴り → 番地と内容の原文。**空のセルは持たない**（下記 `put`）。
+   *
+   * **番地も持つのは、綴りから読み直さずに列挙できるようにするため**（`addresses`）。
+   * キーは `printAddress` が作った綴りなので必ず番地に戻せるが、戻す経路を持つと
+   * **「戻せなかったとき」の分岐が呼び出し側に増える**——起きない場合のために。
+   */
+  readonly #contents = new Map<
+    string,
+    { readonly address: CellAddress; readonly content: string }
+  >();
+
+  /**
+   * 内容を持つセルの番地（要件 F-4-1）。**再計算が依存グラフを組むのに要る。**
+   *
+   * **空のセルは現れない。** 依存グラフの節点は数式を持つセルだけで、
+   * 内容の無いセルは値が `nil` に決まっていて再計算の順序に関わらない。
+   *
+   * @returns 正規化した番地の配列（ADR-0020）。順序は内容を置いた順
+   */
+  addresses(): readonly CellAddress[] {
+    return [...this.#contents.values()].map((cell) => cell.address);
+  }
 
   /**
    * セルの内容を読む。
@@ -25,7 +46,7 @@ export class Sheet {
     // 列の綴りでない番地が**別のセルの内容を読んでしまう**のを防ぐ（`isResolvable`）。
     if (!isResolvable(address)) return '';
 
-    return this.#contents.get(printAddress(address)) ?? '';
+    return this.#contents.get(printAddress(address))?.content ?? '';
   }
 
   /**
@@ -61,6 +82,6 @@ export class Sheet {
       this.#contents.delete(key);
       return;
     }
-    this.#contents.set(key, content);
+    this.#contents.set(key, { address, content });
   }
 }
