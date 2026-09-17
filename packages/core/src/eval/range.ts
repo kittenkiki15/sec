@@ -25,6 +25,24 @@ import type { CellValue, CellValues, RangeValue } from './value.ts';
  * @returns 正規化した矩形。左上と右下の対
  */
 export function makeRange(one: CellAddress, other: CellAddress, values: CellValues): RangeValue {
+  return { kind: 'range', ...normalizeRectangle(one, other), values };
+}
+
+/** 矩形。**左上と右下の対**で、向きは正規化されている。 */
+export interface Rectangle {
+  readonly topLeft: CellAddress;
+  readonly bottomRight: CellAddress;
+}
+
+/**
+ * 2 つの番地が張る矩形を正規化する（§4.3）。
+ *
+ * **範囲の値を作らずに矩形だけが要る側がある**（依存の抽出、要件 F-4-1）。
+ * 正規化の規則を写し取ると、**片方だけが向きを直したときに依存が矩形からずれる。**
+ *
+ * @returns 左上と右下の対。**行と列は別々に正規化する**（`B1 to: A2` は `A1 to: B2`）
+ */
+export function normalizeRectangle(one: CellAddress, other: CellAddress): Rectangle {
   const ascending = compareColumns(one.column, other.column) <= 0;
   const left = ascending ? one.column : other.column;
   const right = ascending ? other.column : one.column;
@@ -32,12 +50,7 @@ export function makeRange(one: CellAddress, other: CellAddress, values: CellValu
   const top = one.row <= other.row ? one.row : other.row;
   const bottom = one.row <= other.row ? other.row : one.row;
 
-  return {
-    kind: 'range',
-    topLeft: { column: left, row: top },
-    bottomRight: { column: right, row: bottom },
-    values,
-  };
+  return { topLeft: { column: left, row: top }, bottomRight: { column: right, row: bottom } };
 }
 
 /** 同じ矩形か（§6.3）。**要素の値は見ない**——範囲は座標の対であって値の入れ物ではない。 */

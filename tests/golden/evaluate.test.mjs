@@ -14,7 +14,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { evaluateFormula, printValue } from '../../packages/core/src/eval/index.ts';
-import { parseAddress, Sheet, sheetValues } from '../../packages/core/src/model/index.ts';
+import { parseAddress, recalculate, Sheet } from '../../packages/core/src/model/index.ts';
 import {
   formatGoldenFailures,
   parseGoldenFile,
@@ -63,7 +63,7 @@ const buildSheet = (cells) => {
 /** ゴールデンテストの入力を評価器に渡す。マクロはまだ無い。 */
 const evaluate = ({ source, sheet, kind }) => {
   if (kind === 'macro') throw new Error('未実装: マクロの評価はまだできません。');
-  return printValue(evaluateFormula(source, sheetValues(buildSheet(sheet))).value);
+  return printValue(evaluateFormula(source, recalculate(buildSheet(sheet))).value);
 };
 
 describe('ゴールデンテストの評価', () => {

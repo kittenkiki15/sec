@@ -101,31 +101,71 @@ export interface Evaluation {
  * @throws {NotImplementedError} まだ評価できないノードに当たった場合
  */
 export function evaluateFormula(source: string, cells: CellValues = EMPTY_CELLS): Evaluation {
+  const parsed = parseFormulaOrFail(source);
+  return parsed.kind === 'failed' ? parsed.evaluation : evaluateParsedFormula(parsed.tree, cells);
+}
+
+/** 構文解析の結果。**読めなければ評価結果（`#Syntax`）になる**ので、例外は出さない。 */
+export type ParsedFormula =
+  | { readonly kind: 'parsed'; readonly tree: Expression }
+  | { readonly kind: 'failed'; readonly evaluation: Evaluation };
+
+/**
+ * 数式の原文を木にする。**構文解析と評価を分けて呼べるようにしたもの。**
+ *
+ * **再計算が同じ木を 2 度使う**（要件 F-4-1 の依存の抽出と、F-4-2 の評価）。
+ * 原文から評価し直すと、シートのすべての数式を 2 度解析することになる。
+ *
+ * @param source 数式の原文（セルの `=` は含めない）
+ * @returns 木、または読めなかったことを表す評価結果
+ */
+export function parseFormulaOrFail(source: string): ParsedFormula {
   try {
-    // 数式の最上位に束縛は無い。名前を導入できるのはブロックの引数だけである（§5.1）。
-    // **予算は評価ごとに作り直す**ので、使い切った評価が次の評価に影響しない。
-    return { value: evaluate(parseFormula(source), EMPTY_ENVIRONMENT, new StepBudget(), cells) };
+    return { kind: 'parsed', tree: parseFormula(source) };
   } catch (error) {
     if (error instanceof LexicalError || error instanceof ParseError) {
       return {
-        value: { kind: 'error', error: 'Syntax' },
-        diagnostic: {
-          phase: error instanceof LexicalError ? 'lexical' : 'parse',
-          line: error.line,
-          column: error.column,
-          message: error.message,
+        kind: 'failed',
+        evaluation: {
+          value: { kind: 'error', error: 'Syntax' },
+          diagnostic: {
+            phase: error instanceof LexicalError ? 'lexical' : 'parse',
+            line: error.line,
+            column: error.column,
+            message: error.message,
+          },
         },
       };
     }
-    // 深い入れ子は構文解析器と評価器のどちらの再帰も尽きさせうる。**どちらで尽きても
-    // 仕様外の例外を漏らさない。** 超過した評価は `#Timeout`（§7.8）。
+    // 深い入れ子は構文解析器の再帰を尽きさせうる。**仕様外の例外を漏らさない。**
+    if (error instanceof RangeError) return { kind: 'failed', evaluation: { value: TIMEOUT } };
+    throw error;
+  }
+}
+
+/**
+ * 解析済みの数式を評価する。
+ *
+ * @param tree 数式の木
+ * @param cells セルの値を答えるもの（§4.2）。**省けばどのセルも空**として扱う
+ * @returns 値。エラーも値として返る
+ * @throws {NotImplementedError} まだ評価できないノードに当たった場合
+ */
+export function evaluateParsedFormula(
+  tree: Expression,
+  cells: CellValues = EMPTY_CELLS,
+): Evaluation {
+  try {
+    // 数式の最上位に束縛は無い。名前を導入できるのはブロックの引数だけである（§5.1）。
+    // **予算は評価ごとに作り直す**ので、使い切った評価が次の評価に影響しない。
+    return { value: evaluate(tree, EMPTY_ENVIRONMENT, new StepBudget(), cells) };
+  } catch (error) {
+    // 深い入れ子は評価器の再帰も尽きさせうる。超過した評価は `#Timeout`（§7.8）。
     //
     // **これは上限そのものではなく安全網である。** ステップ数の上限は `StepBudget` が
     // 持つが（要件 N-5、CLAUDE.md 規約 4）、**再帰の深さはステップ数では表せない。**
     // 1 ステップしか使わない式でも入れ子が深ければスタックが尽きるので、両方が要る。
-    if (error instanceof RangeError) {
-      return { value: { kind: 'error', error: 'Timeout' } };
-    }
+    if (error instanceof RangeError) return { value: TIMEOUT };
     throw error;
   }
 }
@@ -231,6 +271,23 @@ function evaluateSend(
   const receiver = evaluate(node.receiver, environment, budget, cells);
   if (receiver.kind === 'error') return receiver;
 
+  // **規則 1（§4.2）。** 受け手がセルで、そのセレクタを `Cell` 自身が理解するなら、
+  // 受け手も引数もそのまま送る。これが無いと `to:` の引数まで値に置き換わり、
+  // 範囲が作れなくなる。**どちらの規則になるかはセレクタと引数の数だけで決まる**ので、
+  // 引数を評価する前に分かる。
+  const own = receiver.kind === 'cell' && isCellOwnSelector(node.selector, node.arguments.length);
+
+  // **規則 2 の受け手の解決は、引数を評価するより前に行う**（§6.0 の伝播順序）。
+  // 受け手のセルが先に評価されるとは、**そのセルの値がエラーなら引数に到達しない**
+  // ということである（`A1 + (1 / 0)` は A1 が循環していれば `#Circular`）。
+  // 規則 1 のときに解決しないのは、範囲がセルの値を読まないため（§4.3）。
+  let resolvedReceiver: ReceivedValue | null = null;
+  if (!own) {
+    const resolved = heldValue(receiver);
+    if (resolved.kind === 'error') return resolved;
+    resolvedReceiver = resolved;
+  }
+
   const args: ReceivedValue[] = [];
   for (const argument of node.arguments) {
     const value = evaluate(argument, environment, budget, cells);
@@ -238,29 +295,24 @@ function evaluateSend(
     args.push(value);
   }
 
-  // **規則 1（§4.2）。** 受け手がセルで、そのセレクタを `Cell` 自身が理解するなら、
-  // 受け手も引数もそのまま送る。これが無いと `to:` の引数まで値に置き換わり、
-  // 範囲が作れなくなる。
-  if (receiver.kind === 'cell') {
-    const own = sendToCell(receiver, node.selector, args);
-    if (own !== null) return own;
-  }
+  if (own && receiver.kind === 'cell') return sendToCell(receiver, node.selector, args);
 
-  // **規則 2（§4.2）。** それ以外は、受け手と引数のうちセルであるものを保持する値に
-  // 置き換えてから送る。**委譲は受け手の側でしか起きない**ので、引数の側も解決しないと
+  // **規則 2（§4.2）。** 受け手と引数のうちセルであるものを保持する値に置き換えてから送る。
+  // **委譲は受け手の側でしか起きない**ので、引数の側も解決しないと
   // `A1 + B1` が `3 + <Cell>` になり、値どうしの演算にならない。
   //
   // **解決した値がエラーなら、そこで打ち切る**（§6.0）。順序は受け手 → 引数の左から右で、
   // 評価の順序（§3.6）と同じである。
-  const resolved = heldValue(receiver);
-  if (resolved.kind === 'error') return resolved;
-
   const resolvedArgs: ReceivedValue[] = [];
   for (const argument of args) {
     const value = heldValue(argument);
     if (value.kind === 'error') return value;
     resolvedArgs.push(value);
   }
+
+  // 受け手は上で解決してある。規則 1 でないなら必ず値が入っている。
+  const resolved = resolvedReceiver ?? heldValue(receiver);
+  if (resolved.kind === 'error') return resolved;
 
   // 予算を `InvokeBlock` の形に閉じ込める。送信の側は引数の数だけを知っていればよい。
   return sendMessage(
@@ -273,34 +325,39 @@ function evaluateSend(
 }
 
 /**
- * `Cell` 自身が理解するセレクタ（§4.2 の規則 1）。
+ * `Cell` 自身が理解するセレクタか（§4.2 の規則 1）。**綴りと引数の数だけで決まる。**
+ *
+ * **引数の値を見ない。** 規則 1 と規則 2 の分かれ目は受け手の解決より前に要る
+ * （解決すると `to:` の引数が値に置き換わって範囲が作れない）ためで、
+ * `to:` の引数がセルでなければ `#TypeError` になる——それは送信の中の検査である。
+ */
+function isCellOwnSelector(selector: string, arity: number): boolean {
+  return (selector === 'value' && arity === 0) || (selector === 'to:' && arity === 1);
+}
+
+/**
+ * `Cell` 自身が理解するセレクタを送る（§4.2 の規則 1）。
  *
  * **`send.ts` ではなくここに置いた。** 規則 1 と規則 2 の分かれ目そのものなので、
  * 「`Cell` が何を理解するか」が 2 箇所に散ると**片方だけ足したときに委譲の向きが狂う。**
  *
- * @returns 送信の結果。**理解しないセレクタは `null`** で、呼び出し側が規則 2 へ回す
+ * @param args 引数。**`isCellOwnSelector` を満たす数であること**を呼ぶ側が確かめてある
  */
-function sendToCell(
-  cell: CellValue,
-  selector: string,
-  args: readonly ReceivedValue[],
-): Value | null {
-  const [first] = args;
+function sendToCell(cell: CellValue, selector: string, args: readonly ReceivedValue[]): Value {
+  if (selector === 'value') return cell.values(cell.address);
 
-  if (first === undefined) {
-    return selector === 'value' ? cell.values(cell.address) : null;
-  }
+  // 規則 1 に入るセレクタは `value` と `to:` だけなので（`isCellOwnSelector`）、
+  // ここから先は `to:` である。引数が 1 つあることも呼ぶ側が確かめてある。
+  const [first] = args;
+  if (first === undefined) return TYPE_ERROR;
 
   // **範囲はセルの対からしか作れない**（§4.3）。引数の型の誤りなので `#TypeError`
   // であって、`#DoesNotUnderstand` ではない（§6.0 の検査の順序）。
   // **受け手がセルである以上、`to:` は理解している。**
-  if (selector === 'to:' && args.length === 1) {
-    // **値を引く手段は受け手から渡す。** 範囲の列挙が渡す要素は `Cell` なので（§6.3）、
-    // 矩形の中のどの番地についても同じものが要る。
-    return first.kind === 'cell' ? makeRange(cell.address, first.address, cell.values) : TYPE_ERROR;
-  }
-
-  return null;
+  //
+  // **値を引く手段は受け手から渡す。** 範囲の列挙が渡す要素は `Cell` なので（§6.3）、
+  // 矩形の中のどの番地についても同じものが要る。
+  return first.kind === 'cell' ? makeRange(cell.address, first.address, cell.values) : TYPE_ERROR;
 }
 
 /**

@@ -89,24 +89,26 @@ false ifTrue: [1 / 0] ifFalse: [2]
 "--- セルの側のエラー ---
 
 "数式のセルがエラーなら、それを参照した式もそのエラーになる（F-8-1）
-!pending m3
 !A1 := =1 / 0
 A1 + 1
 => #DivideByZero
 
 "受け手のセルが先に評価される
-!pending m3
 !A1 := =1 / 0
 !B1 := =2 foo
 A1 + B1
 => #DivideByZero
 
 "入れ替えれば返るエラーも入れ替わる
-!pending m3
 !A1 := =1 / 0
 !B1 := =2 foo
 B1 + A1
 => #DoesNotUnderstand
+
+"受け手のセルは引数より先に解決される。受け手の値がエラーなら引数に到達しない（§4.2）
+!A1 := =1 / 0
+A1 + (2 foo)
+=> #DivideByZero
 
 "--- 空セルを含む算術（ADR-0010） ---
 
@@ -140,7 +142,6 @@ A0 + (1 / 0)
 => #DivideByZero
 
 "循環参照のセル（§4.2）も同じ
-!pending m3
 !A1 := =A1
 A1 + (1 / 0)
 => #Circular
