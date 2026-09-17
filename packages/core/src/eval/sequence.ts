@@ -1,10 +1,11 @@
 /**
  * 並びを持つ値の演算（仕様書 §6.3）。
  *
- * **`Array` と `Interval` は同じセレクタを理解し、違うのは要素の正体だけである。**
+ * **`Array` / `Range` / `Interval` は同じセレクタを理解し、違うのは要素の正体だけである。**
  * 要素の取り出し方だけを分け（`eachElement` / `elementAt`）、集計と列挙はその上に
- * 1 つずつ書く。**`Range` が 3 つ目として乗る**（M3）。そのときは要素が `Cell` になり、
- * 集計の前に値へ解決する段が要る（§6.3「集計は要素を値に解決してから扱う」）。
+ * 1 つずつ書く。**範囲の要素は `Cell`**（ADR-0015）なので、**集計だけが値へ解決する段を
+ * 通る**（§6.3「集計は要素を値に解決してから扱う」）。列挙はそのまま渡す——飛ばしたり
+ * 置き換えたりすると、ブロックの中でセル自身を扱えなくなる。
  *
  * **区間の要素は位置から計算する**（`start + (i - 1)`、ADR-0016）。足し込みで進めると、
  * 倍精度で 1 を足しても値が変わらない大きさ（`1e21` 付近）で上端に到達しなくなる。
@@ -18,16 +19,19 @@
 
 import type { StepBudget } from './budget.ts';
 import { add, compareNumbers, divide, isNumber, type Ordering, subtract } from './number.ts';
+import { rangeCellAt, rangeSize } from './range.ts';
 import type { InvokeBlock } from './send.ts';
-import type {
-  ArrayValue,
-  BlockValue,
-  ErrorValue,
-  IntegerValue,
-  IntervalValue,
-  NumberValue,
-  ReceivedValue,
-  Value,
+import {
+  type ArrayValue,
+  type BlockValue,
+  type ErrorValue,
+  heldValue,
+  type IntegerValue,
+  type IntervalValue,
+  type NumberValue,
+  type RangeValue,
+  type ReceivedValue,
+  type Value,
 } from './value.ts';
 
 const TYPE_ERROR: ErrorValue = { kind: 'error', error: 'TypeError' };
@@ -39,8 +43,14 @@ const ZERO: NumberValue = { kind: 'integer', value: 0n };
 const integer = (value: bigint): IntegerValue => ({ kind: 'integer', value });
 const array = (elements: readonly ReceivedValue[]): Value => ({ kind: 'array', elements });
 
-/** 並びを持つ値。**`Range` は M3 でここへ入る**（§6.3）。 */
-export type SequenceValue = ArrayValue | IntervalValue;
+/** 並びを持つ値（§6.3）。 */
+export type SequenceValue = ArrayValue | RangeValue | IntervalValue;
+
+/**
+ * **要素で `=` を決める並び**（§6.3）。範囲だけがここに入らない——座標の対であって
+ * 値の入れ物ではないので、`=` は矩形どうしの比較になる（`range.ts`）。
+ */
+type ElementwiseValue = ArrayValue | IntervalValue;
 
 /**
  * 集計と列挙の途中結果。**エラーに当たった時点で打ち切る**ので、値の並びかエラーになる。
@@ -67,8 +77,16 @@ export function makeInterval(start: NumberValue, stop: NumberValue): Value {
 }
 
 /** 要素の数。**`count` セレクタとは違う**（あちらは値が `nil` でない要素を数える）。 */
-export const sequenceSize = (receiver: SequenceValue): bigint =>
-  receiver.kind === 'array' ? BigInt(receiver.elements.length) : receiver.count;
+export function sequenceSize(receiver: SequenceValue): bigint {
+  switch (receiver.kind) {
+    case 'array':
+      return BigInt(receiver.elements.length);
+    case 'range':
+      return rangeSize(receiver);
+    case 'interval':
+      return receiver.count;
+  }
+}
 
 /** 区間の `i` 番目の要素（§6.3）。**位置から計算し、足し込みで進めない。** */
 const intervalElement = (receiver: IntervalValue, index: bigint): Value =>
@@ -82,7 +100,9 @@ const intervalElement = (receiver: IntervalValue, index: bigint): Value =>
 function elementAt(receiver: SequenceValue, index: bigint): Value | undefined {
   if (index < 1n || index > sequenceSize(receiver)) return undefined;
   if (receiver.kind === 'interval') return intervalElement(receiver, index);
-  // 範囲は上で確かめてあるので、`undefined` はここへ来ない。
+  // **範囲の要素は `Cell`**（ADR-0015）。位置から計算するので矩形を並べずに済む。
+  if (receiver.kind === 'range') return rangeCellAt(receiver, index);
+  // 添字が範囲内であることは上で確かめてあるので、`undefined` はここへ来ない。
   return receiver.elements[Number(index) - 1];
 }
 
@@ -99,8 +119,13 @@ function* eachElement(receiver: SequenceValue): Generator<Value> {
     yield* receiver.elements;
     return;
   }
-  for (let index = 1n; index <= receiver.count; index += 1n) {
-    yield intervalElement(receiver, index);
+  // 矩形も区間も位置から要素が決まるので、数え方は同じでよい。
+  // **範囲が行優先で進むことは `rangeCellAt` が持つ**（ADR-0015）。
+  const size = sequenceSize(receiver);
+  for (let index = 1n; index <= size; index += 1n) {
+    yield receiver.kind === 'range'
+      ? rangeCellAt(receiver, index)
+      : intervalElement(receiver, index);
   }
 }
 
@@ -132,7 +157,7 @@ function elementList(receiver: SequenceValue, budget: StepBudget): Collected {
  * @param elementsEqual 要素どうしの比較（§6.1 の `=`）。`send.ts` が持つ
  */
 export function isSequenceEqual(
-  receiver: SequenceValue,
+  receiver: ElementwiseValue,
   argument: ReceivedValue,
   elementsEqual: (a: Value, b: Value) => boolean,
 ): boolean {
@@ -162,6 +187,37 @@ export function isSequenceEqual(
 const presentValues = (elements: readonly ReceivedValue[]): readonly ReceivedValue[] =>
   elements.filter((element) => element.kind !== 'nil');
 
+/**
+ * 集計が見る値に解決する（§6.3）。**範囲の要素は `Cell` なので、各 `Cell` の値を見る。**
+ * `Cell` そのものは `nil` ではないため、この段が無いと空セルを数えてしまう。
+ *
+ * **列挙はここを通らない。** 解決して渡すと、ブロックの中でセル自身を扱えなくなる。
+ *
+ * **解決した値がエラーなら、それが式全体の値になる**（§6.0）。それ以降の要素は見ない。
+ */
+function resolvedValues(elements: readonly ReceivedValue[]): readonly ReceivedValue[] | ErrorValue {
+  const values: ReceivedValue[] = [];
+  for (const element of elements) {
+    const value = heldValue(element);
+    if (value.kind === 'error') return value;
+    values.push(value);
+  }
+  return values;
+}
+
+/** 集計の対象になる値。**要素を値に解決し、値が `nil` のものを落とす**（ADR-0010）。 */
+function aggregatedValues(
+  receiver: SequenceValue,
+  budget: StepBudget,
+): readonly ReceivedValue[] | ErrorValue {
+  const elements = elementList(receiver, budget);
+  if (isFailure(elements)) return elements;
+
+  const values = resolvedValues(elements);
+  if (isFailure(values)) return values;
+  return presentValues(values);
+}
+
 /** 集計は数を要求する（`count` を除く）。**数でない値があれば `#TypeError`**（§6.3）。 */
 function asNumbers(values: readonly ReceivedValue[]): readonly NumberValue[] | ErrorValue {
   const numbers: NumberValue[] = [];
@@ -177,9 +233,8 @@ function aggregatedNumbers(
   receiver: SequenceValue,
   budget: StepBudget,
 ): readonly NumberValue[] | ErrorValue {
-  const elements = elementList(receiver, budget);
-  if (isFailure(elements)) return elements;
-  return asNumbers(presentValues(elements));
+  const values = aggregatedValues(receiver, budget);
+  return isFailure(values) ? values : asNumbers(values);
 }
 
 /** 総和。**空なら `0`**（加法の単位元、ADR-0010）。 */
@@ -201,9 +256,8 @@ export function sumOf(receiver: SequenceValue, budget: StepBudget): Value {
 
 /** `count`。**数を要求しない**ので、文字列が入っていても数える（§6.3）。 */
 export function countOf(receiver: SequenceValue, budget: StepBudget): Value {
-  const elements = elementList(receiver, budget);
-  if (isFailure(elements)) return elements;
-  return integer(BigInt(presentValues(elements).length));
+  const values = aggregatedValues(receiver, budget);
+  return isFailure(values) ? values : integer(BigInt(values.length));
 }
 
 /**
