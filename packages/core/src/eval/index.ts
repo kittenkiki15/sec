@@ -4,9 +4,12 @@ export type {
   ArrayValue,
   BlockValue,
   BooleanValue,
+  CellValue,
+  CellValues,
   DecimalValue,
   ErrorKind,
   ErrorValue,
+  HeldValue,
   IntegerValue,
   NilValue,
   NumberValue,
@@ -15,4 +18,4 @@ export type {
   SymbolValue,
   Value,
 } from './value.ts';
-export { printValue } from './value.ts';
+export { heldValue, printValue } from './value.ts';

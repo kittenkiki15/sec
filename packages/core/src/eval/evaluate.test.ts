@@ -92,15 +92,36 @@ describe('evaluateFormula のエラー', () => {
   });
 });
 
+describe('evaluateFormula のセル参照（§4.2）', () => {
+  // 値の側はゴールデンテスト（references.txt）が網羅している。ここに置くのは、
+  // **シートを渡さずに評価したとき**の振る舞いと、まだ実装の無い行き先である。
+  it('シートを渡さなければ、どのセルも空として扱う', () => {
+    expect(evaluated('A1')).toBe('nil');
+    expect(evaluated('A1 value')).toBe('nil');
+  });
+
+  it('解決できない参照は #Ref（§4.2）', () => {
+    expect(evaluated('A0')).toBe('#Ref');
+    expect(evaluated('A000')).toBe('#Ref');
+  });
+
+  it('どこにも束縛されていない識別子も #Ref', () => {
+    expect(evaluated('foo')).toBe('#Ref');
+    expect(evaluated('Abc123')).toBe('#Ref');
+  });
+
+  it('ブロックの引数は識別子として解決できる（§5.1）', () => {
+    expect(evaluated('[:x | x] value: 1')).toBe('1');
+  });
+});
+
 describe('evaluateFormula のまだ評価できないもの', () => {
   // 保留のケース（!pending）はここで例外になる。黙って別の値を返すと、
   // ゴールデンテストが「たまたま期待値と一致した」ことを検出できなくなる。
-  it('セル参照は例外にする', () => {
-    expect(() => evaluateFormula('A1')).toThrow(/未実装/);
-  });
-
-  it('裸の識別子は例外にする', () => {
-    expect(() => evaluateFormula('foo')).toThrow(/未実装/);
+  // **`to:` は `Cell` 自身が理解する**（§4.2）ので、値へ委譲して区間を作ってはならない。
+  it('セルからの範囲は例外にする（§4.3 は段階 3）', () => {
+    expect(() => evaluateFormula('A1..B2')).toThrow(/未実装/);
+    expect(() => evaluateFormula('A1 to: B2')).toThrow(/未実装/);
   });
 });
 
@@ -431,8 +452,8 @@ describe('evaluateFormula のブロックの引数（§5.1）', () => {
     expect(evaluated('[:x :x | x] value: 1 value: 2')).toBe('#Syntax');
   });
 
-  it('束縛されていない識別子はまだ評価できない（§4.2 の #Ref は M3）', () => {
-    expect(() => evaluateFormula('[:x | y] value: 1')).toThrow(/未実装/);
+  it('ブロックの中でも、束縛されていない識別子は #Ref（§4.2）', () => {
+    expect(evaluated('[:x | y] value: 1')).toBe('#Ref');
   });
 });
 

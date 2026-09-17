@@ -62,12 +62,10 @@
 
 "--- セル参照との組み合わせ ---
 
-!pending m3
 !A1 := 3
 [:x | x + A1] value: 1
 => 4
 
-!pending m3
 !A1 := 3
 [A1 * 2] value
 => 6

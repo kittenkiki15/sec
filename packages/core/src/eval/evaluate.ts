@@ -5,16 +5,18 @@
  * すべての引数は送信の前に評価される（先行評価）。**遅延評価はブロックで表す**（要件 F-2-9）。
  * 1 回の送信の中でどう検査するかは `send.ts` が引き受ける。
  *
- * **セル参照（M3）とマクロ（M4）、およびどこにも束縛されていない識別子はまだ評価できず、
- * 例外になる。** ゴールデンテストの側はそれらのケースに `!pending` の印を付けてある
- * （ADR-0019）。束縛されていない識別子を §4.2 の `#Ref` にするのは、
- * セル参照が解決できるようになってからでよい（`references.txt` が M3 待ちである）。
+ * **セル参照は `Cell` に評価され、理解しないメッセージは保持する値へ委譲される**
+ * （§4.2、ADR-0008）。**委譲の規則 1 と規則 2 は `evaluateSend` が持ち、**
+ * `Cell` 自身が理解するセレクタは `sendToCell` にある。
+ * **範囲（§4.3）とマクロ（M4）はまだ評価できず、例外になる。**
+ * ゴールデンテストの側はそれらのケースに `!pending` の印を付けてある（ADR-0019）。
  *
  * **エラーは値として返し、例外にしない**（要件 F-8-1）。例外にすると評価の途中で制御が飛び、
  * §6.0 の伝播順序（受け手 → 引数を左から右 → 送信）を値の受け渡しで表せなくなる。
  * **例外を使うのは「まだ実装が無い」ことを言うときだけ**で、これは仕様上の状態ではない。
  */
 
+import { isResolvable, parseAddress } from '../model/address.ts';
 import { LexicalError } from '../syntax/lexer.ts';
 import {
   type Expression,
@@ -25,9 +27,23 @@ import {
 } from '../syntax/parser.ts';
 import { StepBudget } from './budget.ts';
 import { sendMessage } from './send.ts';
-import type { BlockValue, Environment, ReceivedValue, Value } from './value.ts';
+import {
+  type BlockValue,
+  type CellValue,
+  type CellValues,
+  type Environment,
+  heldValue,
+  type ReceivedValue,
+  type Value,
+} from './value.ts';
 
 const TIMEOUT: Value = { kind: 'error', error: 'Timeout' };
+
+/** 解決できない参照（§4.2）。行 0 のセルと、どこにも束縛されていない識別子。 */
+const REF: Value = { kind: 'error', error: 'Ref' };
+
+/** どのセルも空のシート。**シートを渡されない評価**（`sec eval` の式）が使う。 */
+const EMPTY_CELLS: CellValues = () => ({ kind: 'nil' });
 
 /** まだ評価できないノードに当たったことを表す。**仕様上のエラーではない。** */
 export class NotImplementedError extends Error {
@@ -75,14 +91,15 @@ export interface Evaluation {
  * どちらも位置と説明文を持つが、字句の段階か構文の段階かは報告する側に要る（要件 F-8-3）。
  *
  * @param source 数式の原文（セルの `=` は含めない）
+ * @param cells セルの値を答えるもの（§4.2）。**省けばどのセルも空**として扱う
  * @returns 値と診断の組。エラーも値として返る
  * @throws {NotImplementedError} まだ評価できないノードに当たった場合
  */
-export function evaluateFormula(source: string): Evaluation {
+export function evaluateFormula(source: string, cells: CellValues = EMPTY_CELLS): Evaluation {
   try {
     // 数式の最上位に束縛は無い。名前を導入できるのはブロックの引数だけである（§5.1）。
     // **予算は評価ごとに作り直す**ので、使い切った評価が次の評価に影響しない。
-    return { value: evaluate(parseFormula(source), EMPTY_ENVIRONMENT, new StepBudget()) };
+    return { value: evaluate(parseFormula(source), EMPTY_ENVIRONMENT, new StepBudget(), cells) };
   } catch (error) {
     if (error instanceof LexicalError || error instanceof ParseError) {
       return {
@@ -120,7 +137,8 @@ const EMPTY_ENVIRONMENT: Environment = new Map();
  * @returns その値。**エラーになることがある**（`1.0e400` は `#Overflow`、ADR-0013）
  */
 export function evaluateLiteral(node: LiteralNode): Value {
-  return evaluate(node, EMPTY_ENVIRONMENT, new StepBudget());
+  // リテラルにセル参照は現れない（§2）ので、どのセルも空のまま評価してよい。
+  return evaluate(node, EMPTY_ENVIRONMENT, new StepBudget(), EMPTY_CELLS);
 }
 
 /**
@@ -128,11 +146,13 @@ export function evaluateLiteral(node: LiteralNode): Value {
  *
  * @param environment その位置で見えている束縛（§5.1）。ブロックの引数だけが入る
  * @param budget 1 回の評価が使えるステップ数（要件 N-5、§7.8）
+ * @param cells セルの値を答えるもの（§4.2）
  */
 function evaluate(
   node: Expression | LiteralNode,
   environment: Environment,
   budget: StepBudget,
+  cells: CellValues,
 ): Value {
   // **1 ノードの評価が 1 ステップ。** 尽きた評価は中断して `#Timeout`（§7.8）。
   if (!budget.spend()) return TIMEOUT;
@@ -154,7 +174,7 @@ function evaluate(
     case 'array': {
       const elements: Value[] = [];
       for (const element of node.elements) {
-        const value = evaluate(element, environment, budget);
+        const value = evaluate(element, environment, budget, cells);
         // **予算切れは値ではなく打ち切りである**（§7.8）。要素に混ぜると、打ち切られた
         // ことが式の値から読み取れなくなる。**要素の `#Overflow`（`#(1.0e400)`）とは
         // 違う**ので、ここだけは種別を見て分ける。あちらは表せない値であって、
@@ -173,16 +193,20 @@ function evaluate(
     case 'block':
       return { kind: 'block', parameters: node.parameters, body: node, environment };
     case 'send':
-      return evaluateSend(node, environment, budget);
-    case 'cell':
-      throw new NotImplementedError('セル参照');
-    // 束縛されている識別子はブロックの引数（§5.1）。**それ以外は §4.2 が `#Ref` と
-    // 定めているが、セル参照が解決できない今はまだ実装しない**（M3）。
-    case 'identifier': {
-      const bound = environment.get(node.name);
-      if (bound === undefined) throw new NotImplementedError('束縛されていない識別子');
-      return bound;
+      return evaluateSend(node, environment, budget, cells);
+    // **セル参照は `Cell` に評価される**（§4.2、ADR-0008）。ここでは値を読まない。
+    // 読むのは委譲（規則 2）か `value` の送信で、**範囲は読まないまま作れる**（§4.3）。
+    case 'cell': {
+      const address = parseAddress(node.name);
+      // 構文解析器が通した綴りなので番地にはなる。**解決できるかは別の規則**で、
+      // 行が 1 始まりでなければ（`A0` / `A000`）指す先が無い（§4.2、ADR-0020）。
+      if (address === null || !isResolvable(address)) return REF;
+      return { kind: 'cell', address, values: cells };
     }
+    // 束縛されている識別子はブロックの引数（§5.1）。**それ以外は解決できない**——
+    // 数式から参照できる名前が存在しないため（名前付き範囲は MVP の範囲外、§4.2）。
+    case 'identifier':
+      return environment.get(node.name) ?? REF;
   }
 }
 
@@ -193,25 +217,78 @@ function evaluate(
  * エラーの種別に強弱は無く、決めるのは順序だけである。打ち切りをここに集めてあるので、
  * **エラーが受け手や引数として送信まで届くことはない**（`ReceivedValue` がそれを表す）。
  */
-function evaluateSend(node: SendNode, environment: Environment, budget: StepBudget): Value {
-  const receiver = evaluate(node.receiver, environment, budget);
+function evaluateSend(
+  node: SendNode,
+  environment: Environment,
+  budget: StepBudget,
+  cells: CellValues,
+): Value {
+  const receiver = evaluate(node.receiver, environment, budget, cells);
   if (receiver.kind === 'error') return receiver;
 
   const args: ReceivedValue[] = [];
   for (const argument of node.arguments) {
-    const value = evaluate(argument, environment, budget);
+    const value = evaluate(argument, environment, budget, cells);
     if (value.kind === 'error') return value;
     args.push(value);
   }
 
+  // **規則 1（§4.2）。** 受け手がセルで、そのセレクタを `Cell` 自身が理解するなら、
+  // 受け手も引数もそのまま送る。これが無いと `to:` の引数まで値に置き換わり、
+  // 範囲が作れなくなる。
+  if (receiver.kind === 'cell') {
+    const own = sendToCell(receiver, node.selector, args);
+    if (own !== null) return own;
+  }
+
+  // **規則 2（§4.2）。** それ以外は、受け手と引数のうちセルであるものを保持する値に
+  // 置き換えてから送る。**委譲は受け手の側でしか起きない**ので、引数の側も解決しないと
+  // `A1 + B1` が `3 + <Cell>` になり、値どうしの演算にならない。
+  //
+  // **解決した値がエラーなら、そこで打ち切る**（§6.0）。順序は受け手 → 引数の左から右で、
+  // 評価の順序（§3.6）と同じである。
+  const resolved = heldValue(receiver);
+  if (resolved.kind === 'error') return resolved;
+
+  const resolvedArgs: ReceivedValue[] = [];
+  for (const argument of args) {
+    const value = heldValue(argument);
+    if (value.kind === 'error') return value;
+    resolvedArgs.push(value);
+  }
+
   // 予算を `InvokeBlock` の形に閉じ込める。送信の側は引数の数だけを知っていればよい。
   return sendMessage(
-    receiver,
+    resolved,
     node.selector,
-    args,
-    (block, blockArgs) => invokeBlock(block, blockArgs, budget),
+    resolvedArgs,
+    (block, blockArgs) => invokeBlock(block, blockArgs, budget, cells),
     budget,
   );
+}
+
+/**
+ * `Cell` 自身が理解するセレクタ（§4.2 の規則 1）。
+ *
+ * **`send.ts` ではなくここに置いた。** 規則 1 と規則 2 の分かれ目そのものなので、
+ * 「`Cell` が何を理解するか」が 2 箇所に散ると**片方だけ足したときに委譲の向きが狂う。**
+ *
+ * @returns 送信の結果。**理解しないセレクタは `null`** で、呼び出し側が規則 2 へ回す
+ * @throws {NotImplementedError} `to:`（§4.3 の `Range` は M3 段階 3）
+ */
+function sendToCell(
+  cell: CellValue,
+  selector: string,
+  args: readonly ReceivedValue[],
+): Value | null {
+  if (selector === 'value' && args.length === 0) return cell.values(cell.address);
+
+  // **`#DoesNotUnderstand` で済ませない。** 仕様が定めた送信（§4.3）を「理解しない」と
+  // 偽ることになるうえ、規則 2 へ回すと `A1 to: A3` が値の区間（`1 to: 3`）になり、
+  // **範囲を期待する保留のケースがたまたま通ってしまう。**
+  if (selector === 'to:' && args.length === 1) throw new NotImplementedError('セルからの範囲');
+
+  return null;
 }
 
 /**
@@ -228,8 +305,14 @@ function evaluateSend(node: SendNode, environment: Environment, budget: StepBudg
  *
  * @param args 引数に束ねる値。セレクタの綴りが数を決める（`value:value:` なら 2 つ）
  * @param budget 1 回の評価が使えるステップ数（要件 N-5、§7.8）
+ * @param cells セルの値を答えるもの（§4.2）。本体の中のセル参照が使う
  */
-function invokeBlock(block: BlockValue, args: readonly ReceivedValue[], budget: StepBudget): Value {
+function invokeBlock(
+  block: BlockValue,
+  args: readonly ReceivedValue[],
+  budget: StepBudget,
+  cells: CellValues,
+): Value {
   const environment = bindParameters(block, args);
   if (environment === null) return { kind: 'error', error: 'TypeError' };
 
@@ -244,7 +327,7 @@ function invokeBlock(block: BlockValue, args: readonly ReceivedValue[], budget: 
     throw new NotImplementedError('マクロのブロック');
   }
 
-  return evaluate(statement, environment, budget);
+  return evaluate(statement, environment, budget, cells);
 }
 
 /**

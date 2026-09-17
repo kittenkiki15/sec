@@ -9,6 +9,7 @@
  * エラーになった時点で評価が打ち切られるため（§6.0）。
  */
 
+import type { CellAddress } from '../model/address.ts';
 import { isBareSymbolSpelling } from '../syntax/lexer.ts';
 import type { Body } from '../syntax/parser.ts';
 
@@ -109,8 +110,38 @@ export interface ErrorValue {
 }
 
 /**
+ * セル（§4.2、[ADR-0008](../../../../docs/adr/0008-cell-value-delegation.md)）。
+ * **`Cell` 自身が理解するのは `value` と `to:`** で、それ以外は保持する値へ委譲する。
+ *
+ * **保持する値を持たず、引く手段だけを持つ。** §4.3 が「範囲は座標の対でしかなく、
+ * 作るだけならセルに値が入っている必要はない」と定めており、`A1 to: B10` は委譲を
+ * 起こさない。**値を抱えると、範囲を作るだけで両端を読むことになる。**
+ * 数式セルの値は他のセルに依存する（M3 段階 5）ので、読む回数は少ない方がよい。
+ */
+export interface CellValue {
+  readonly kind: 'cell';
+  readonly address: CellAddress;
+  readonly values: CellValues;
+}
+
+/**
+ * セルが保持しうる値。**セルはセルを保持しない**——内容の解釈（§4.4）が返すのは
+ * §2 のリテラルの値か数式の評価結果であり、どちらもセルにはならない。
+ */
+export type HeldValue = Exclude<Value, CellValue>;
+
+/**
+ * 番地からそのセルが保持する値を答える（§4.2）。
+ *
+ * **シートそのものではない。** 数式セルの値は再計算の結果であり（要件 F-4）、
+ * シートは原文しか持たない。**その段を挟むのが目的の型**で、M3 段階 5 では
+ * 再計算エンジンがこれになる。
+ */
+export type CellValues = (address: CellAddress) => HeldValue;
+
+/**
  * 数式の評価結果（§6.0 の値の分類）。
- * `Range` と `Cell` はセル参照が要るため、まだ無い。
+ * `Range` はセル参照から作る（§4.3）ため、まだ無い（M3 段階 3）。
  */
 export type Value =
   | IntegerValue
@@ -122,7 +153,19 @@ export type Value =
   | ArrayValue
   | IntervalValue
   | BlockValue
+  | CellValue
   | ErrorValue;
+
+/**
+ * セルなら保持する値、それ以外はそのまま（§4.2 の委譲）。
+ *
+ * **送信の直前に受け手と引数へ当てるのが規則 2 である**（`evaluate.ts`）。
+ * ここに置いてあるのは、配列の要素として渡ったセルを比べるときにも同じ解決が要るため
+ * （範囲の列挙が要素にセルを渡す、M3 段階 4）。
+ */
+export function heldValue(value: Value): HeldValue {
+  return value.kind === 'cell' ? value.values(value.address) : value;
+}
 
 /**
  * 受け手と引数に現れうる値。**エラーはメッセージを受け取らない**（§6.0）。
@@ -195,6 +238,9 @@ export function printValue(value: Value): string {
     // 変えただけでゴールデンテストが落ちる（エラーに文言を含めない理由と同じ）。
     case 'block':
       return 'aBlock';
+    // **セルの表記は保持する値の表記に従う**（§4.2）。番地は出ない。
+    case 'cell':
+      return printValue(heldValue(value));
     case 'error':
       return `#${value.error}`;
   }

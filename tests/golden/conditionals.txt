@@ -104,18 +104,15 @@ false ifNil: [0]
 
 "--- 条件式とセル参照 ---
 
-!pending m3
 !A1 := 3
 A1 > 2 ifTrue: ['大'] ifFalse: ['小']
 => '大'
 
-!pending m3
 !A1 := 1
 A1 > 2 ifTrue: ['大'] ifFalse: ['小']
 => '小'
 
 "委譲によって、セルの値が nil かどうかも判定できる
-!pending m3
 !A1 := 1
 A1 ifNil: [0]
 => 1
