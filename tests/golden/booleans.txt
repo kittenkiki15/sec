@@ -138,6 +138,17 @@ nil isTrue
 true = true
 => true
 
+"ブロックだけは = を持たない（§5.1）ので、そこだけ = true と答えが揃わない
+[1] isTrue
+=> false
+
+[1] = true
+=> #DoesNotUnderstand
+
+"引数の側なら差は出ない。= を持たないのは受け手としてのブロックである
+true = [1]
+=> false
+
 "「false 以外を真とみなす」規則ではない。条件として読む側は真偽値を要求したまま
 1 ifTrue: ['真']
 => #DoesNotUnderstand
