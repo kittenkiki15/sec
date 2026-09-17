@@ -67,3 +67,18 @@ export function printAddress(address: CellAddress): string {
 export function isResolvable(address: CellAddress): boolean {
   return COLUMN_SPELLING.test(address.column) && address.row > 0n;
 }
+
+/**
+ * 列の綴りの大小。**範囲の正規化（§4.3）が要る。**
+ *
+ * **辞書順ではない。** 列は双射基数 26（`Z` の次が `AA`）なので、
+ * 綴りが長い列ほど右にある。辞書順で比べると `AA` が `Z` より先になり、
+ * **`AA1 to: Z1` が矩形を裏返したまま正規化される。**
+ *
+ * @returns 左が先なら `-1`、右が先なら `1`、同じ列なら `0`
+ */
+export function compareColumns(left: string, right: string): number {
+  if (left.length !== right.length) return left.length < right.length ? -1 : 1;
+  if (left === right) return 0;
+  return left < right ? -1 : 1;
+}

@@ -8,8 +8,9 @@
  * **セル参照は `Cell` に評価され、理解しないメッセージは保持する値へ委譲される**
  * （§4.2、ADR-0008）。**委譲の規則 1 と規則 2 は `evaluateSend` が持ち、**
  * `Cell` 自身が理解するセレクタは `sendToCell` にある。
- * **範囲（§4.3）とマクロ（M4）はまだ評価できず、例外になる。**
- * ゴールデンテストの側はそれらのケースに `!pending` の印を付けてある（ADR-0019）。
+ * **範囲（§4.3）まで評価できる。** まだ評価できないのは数式を持つセル（M3 段階 5）と
+ * マクロ（M4）で、どちらも例外になる。
+ * ゴールデンテストの側はそのケースに `!pending` の印を付けてある（ADR-0019）。
  *
  * **エラーは値として返し、例外にしない**（要件 F-8-1）。例外にすると評価の途中で制御が飛び、
  * §6.0 の伝播順序（受け手 → 引数を左から右 → 送信）を値の受け渡しで表せなくなる。
@@ -26,6 +27,7 @@ import {
   type SendNode,
 } from '../syntax/parser.ts';
 import { StepBudget } from './budget.ts';
+import { makeRange } from './range.ts';
 import { sendMessage } from './send.ts';
 import {
   type BlockValue,
@@ -41,6 +43,9 @@ const TIMEOUT: Value = { kind: 'error', error: 'Timeout' };
 
 /** 解決できない参照（§4.2）。行 0 のセルと、どこにも束縛されていない識別子。 */
 const REF: Value = { kind: 'error', error: 'Ref' };
+
+/** 引数の型が合わない（§6.0 の検査の順序 2）。範囲の端がセルでないときに返る。 */
+const TYPE_ERROR: Value = { kind: 'error', error: 'TypeError' };
 
 /** どのセルも空のシート。**シートを渡されない評価**（`sec eval` の式）が使う。 */
 const EMPTY_CELLS: CellValues = () => ({ kind: 'nil' });
@@ -274,19 +279,24 @@ function evaluateSend(
  * 「`Cell` が何を理解するか」が 2 箇所に散ると**片方だけ足したときに委譲の向きが狂う。**
  *
  * @returns 送信の結果。**理解しないセレクタは `null`** で、呼び出し側が規則 2 へ回す
- * @throws {NotImplementedError} `to:`（§4.3 の `Range` は M3 段階 3）
  */
 function sendToCell(
   cell: CellValue,
   selector: string,
   args: readonly ReceivedValue[],
 ): Value | null {
-  if (selector === 'value' && args.length === 0) return cell.values(cell.address);
+  const [first] = args;
 
-  // **`#DoesNotUnderstand` で済ませない。** 仕様が定めた送信（§4.3）を「理解しない」と
-  // 偽ることになるうえ、規則 2 へ回すと `A1 to: A3` が値の区間（`1 to: 3`）になり、
-  // **範囲を期待する保留のケースがたまたま通ってしまう。**
-  if (selector === 'to:' && args.length === 1) throw new NotImplementedError('セルからの範囲');
+  if (first === undefined) {
+    return selector === 'value' ? cell.values(cell.address) : null;
+  }
+
+  // **範囲はセルの対からしか作れない**（§4.3）。引数の型の誤りなので `#TypeError`
+  // であって、`#DoesNotUnderstand` ではない（§6.0 の検査の順序）。
+  // **受け手がセルである以上、`to:` は理解している。**
+  if (selector === 'to:' && args.length === 1) {
+    return first.kind === 'cell' ? makeRange(cell.address, first.address) : TYPE_ERROR;
+  }
 
   return null;
 }
