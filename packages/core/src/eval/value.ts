@@ -9,7 +9,7 @@
  * エラーになった時点で評価が打ち切られるため（§6.0）。
  */
 
-import type { CellAddress } from '../model/address.ts';
+import { type CellAddress, printAddress } from '../model/address.ts';
 import { isBareSymbolSpelling } from '../syntax/lexer.ts';
 import type { Body } from '../syntax/parser.ts';
 
@@ -125,6 +125,22 @@ export interface CellValue {
 }
 
 /**
+ * 範囲（§4.3）。**正規化した矩形**で、左上と右下の番地の対でしかない。
+ *
+ * **セルの値を持たない。** 範囲は座標の対であって値の入れ物ではなく（§4.3）、
+ * `=` も正規化した矩形だけで決まる（§6.3）。**中身を読むのは列挙と集計だけ**なので、
+ * そのときに値を引く手段を持たせる（M3 段階 4）。
+ *
+ * **向きは作る時点で正規化する**（`range.ts`）。値になった後の矩形は常に
+ * 左上 → 右下の向きなので、**読む側が向きを気にしなくてよい。**
+ */
+export interface RangeValue {
+  readonly kind: 'range';
+  readonly topLeft: CellAddress;
+  readonly bottomRight: CellAddress;
+}
+
+/**
  * セルが保持しうる値。**セルはセルを保持しない**——内容の解釈（§4.4）が返すのは
  * §2 のリテラルの値か数式の評価結果であり、どちらもセルにはならない。
  */
@@ -139,10 +155,7 @@ export type HeldValue = Exclude<Value, CellValue>;
  */
 export type CellValues = (address: CellAddress) => HeldValue;
 
-/**
- * 数式の評価結果（§6.0 の値の分類）。
- * `Range` はセル参照から作る（§4.3）ため、まだ無い（M3 段階 3）。
- */
+/** 数式の評価結果（§6.0 の値の分類）。 */
 export type Value =
   | IntegerValue
   | DecimalValue
@@ -152,6 +165,7 @@ export type Value =
   | NilValue
   | ArrayValue
   | IntervalValue
+  | RangeValue
   | BlockValue
   | CellValue
   | ErrorValue;
@@ -234,6 +248,10 @@ export function printValue(value: Value): string {
     // 空であってもそう書く。要素を並べないのは、整数の端が任意精度だからでもある。
     case 'interval':
       return `${printValue(value.start)} to: ${printValue(value.stop)}`;
+    // **糖衣で書いても表記は正準形になる**（§4.3）。両端は正規化した番地なので、
+    // `A007..A3` も `A3 to: A7` と書く（ADR-0020）。
+    case 'range':
+      return `${printAddress(value.topLeft)} to: ${printAddress(value.bottomRight)}`;
     // 引数の数も本体も表記しない（§5.1）。原文をそのまま書くと、空白の入れ方を
     // 変えただけでゴールデンテストが落ちる（エラーに文言を含めない理由と同じ）。
     case 'block':

@@ -91,8 +91,9 @@ function runEval(args: readonly string[]): CommandResult {
   try {
     evaluation = evaluateFormula(source);
   } catch (error) {
-    // **まだ実装していないことは仕様上のエラーではない**（M3 のセル参照、M4 のマクロ）。
-    // #Ref などの値に化けさせると、実装済みかどうかが出力から読み取れなくなる。
+    // **まだ実装していないことは仕様上のエラーではない**（数式セルは M3 段階 5、
+    // マクロは M4）。#Ref などの値に化けさせると、実装済みかどうかが出力から読み取れない。
+    // **いまは引数の式から到達できる未実装が無い**（`command.test.ts`）。
     if (error instanceof NotImplementedError) {
       return { stdout: '', stderr: `${error.message}\n`, exitCode: EXIT.usage };
     }

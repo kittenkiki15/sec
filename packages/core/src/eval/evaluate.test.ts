@@ -115,13 +115,43 @@ describe('evaluateFormula のセル参照（§4.2）', () => {
   });
 });
 
-describe('evaluateFormula のまだ評価できないもの', () => {
-  // 保留のケース（!pending）はここで例外になる。黙って別の値を返すと、
-  // ゴールデンテストが「たまたま期待値と一致した」ことを検出できなくなる。
-  // **`to:` は `Cell` 自身が理解する**（§4.2）ので、値へ委譲して区間を作ってはならない。
-  it('セルからの範囲は例外にする（§4.3 は段階 3）', () => {
-    expect(() => evaluateFormula('A1..B2')).toThrow(/未実装/);
-    expect(() => evaluateFormula('A1 to: B2')).toThrow(/未実装/);
+describe('evaluateFormula の範囲（§4.3）', () => {
+  // 矩形の正規化と表記はゴールデンテスト（ranges.txt）が網羅している。ここに置くのは
+  // **値としての形**と、シートを渡さなくても作れること（範囲はセルの値を読まない）である。
+  it('Cell>>to: が範囲を返す。両端に値が入っていなくてもよい', () => {
+    expect(evaluatedValue('A1 to: B2')).toEqual({
+      kind: 'range',
+      topLeft: { column: 'A', row: 1n },
+      bottomRight: { column: 'B', row: 2n },
+    });
+  });
+
+  it('糖衣は構文解析の時点で to: へ脱糖するので、同じ値になる', () => {
+    expect(evaluatedValue('A1..B2')).toEqual(evaluatedValue('A1 to: B2'));
+    expect(evaluatedValue('A1:B2')).toEqual(evaluatedValue('A1 to: B2'));
+  });
+
+  // 解決できない番地は Cell にならない（§4.2）ので、範囲を作る前に打ち切られる。
+  it('解決できない番地からは範囲を作れない', () => {
+    expect(evaluated('A0 to: B2')).toBe('#Ref');
+    expect(evaluated('A1 to: B0')).toBe('#Ref');
+  });
+
+  it('引数がセルでなければ #TypeError（§6.3 の Cell の表）', () => {
+    expect(evaluated('A1 to: 5')).toBe('#TypeError');
+    expect(evaluated("A1 to: 'x'")).toBe('#TypeError');
+    expect(evaluated('A1 to: nil')).toBe('#TypeError');
+  });
+
+  it('範囲は to: を理解しない。範囲の範囲は作れない', () => {
+    expect(evaluated('(A1 to: A2) to: A3')).toBe('#DoesNotUnderstand');
+  });
+
+  it('同じ矩形かどうかで比べる。要素の値は見ない（§6.3）', () => {
+    expect(evaluated('A1..B2 = (B2..A1)')).toBe('true');
+    expect(evaluated('A1..B2 = (A1..B3)')).toBe('false');
+    expect(evaluated('A1..B2 ~= (A1..B3)')).toBe('true');
+    expect(evaluated('A1..B2 = 3')).toBe('false');
   });
 });
 

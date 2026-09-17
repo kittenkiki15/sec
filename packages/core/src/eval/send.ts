@@ -38,6 +38,7 @@ import {
   subtract,
   truncate,
 } from './number.ts';
+import { isSameRectangle } from './range.ts';
 import {
   at,
   averageOf,
@@ -129,6 +130,10 @@ function isEqual(left: Value, right: Value): boolean {
     case 'array':
     case 'interval':
       return argument.kind !== 'error' && isSequenceEqual(receiver, argument, isEqual);
+    // **範囲だけが要素で比べない**（§6.3）。座標の対であって値の入れ物ではないためで、
+    // 向きは作る時点で正規化されている（§4.3）ので端どうしを見れば足りる。
+    case 'range':
+      return argument.kind === 'range' && isSameRectangle(receiver, argument);
     // ブロックに `=` は無い（§5.1）。**受け手としては `sendToAny` が弾く**ので、
     // ここへ来るのは配列の要素として比べられたときだけ。等しくないとみなす。
     case 'block':
@@ -509,6 +514,10 @@ function dispatch(
     case 'array':
     case 'interval':
       return sendToSequence(receiver, selector, args, invoke, budget);
+    // **範囲の列挙と集計は M3 段階 4。** ここで理解しないセレクタは
+    // `#DoesNotUnderstand` になるが、それは仕様上ありうる値でもある（`A1:B2 -3`）。
+    case 'range':
+      return undefined;
     // **セルは受け手として届かない。** `Cell` 自身が理解するセレクタは `evaluate.ts` が
     // 先に処理し（§4.2 の規則 1）、それ以外は保持する値へ置き換えられてから送られる（規則 2）。
     case 'cell':

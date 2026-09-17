@@ -174,3 +174,26 @@ describe('printValue のブロック', () => {
     expect(printValue({ kind: 'block', parameters: ['x', 'y'], body, environment })).toBe('aBlock');
   });
 });
+
+describe('printValue の範囲', () => {
+  // 糖衣で書いても表記は正準形になる（§4.3）。番地は正規化した綴り（ADR-0020）。
+  it('正準形と同じ形で書く', () => {
+    expect(
+      printValue({
+        kind: 'range',
+        topLeft: { column: 'A', row: 1n },
+        bottomRight: { column: 'B', row: 10n },
+      }),
+    ).toBe('A1 to: B10');
+  });
+
+  it('1 つのセルだけの範囲も両端を書く', () => {
+    expect(
+      printValue({
+        kind: 'range',
+        topLeft: { column: 'A', row: 1n },
+        bottomRight: { column: 'A', row: 1n },
+      }),
+    ).toBe('A1 to: A1');
+  });
+});

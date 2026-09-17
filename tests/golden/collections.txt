@@ -263,11 +263,9 @@ A1..A1 isEmpty
 => false
 
 "同じ矩形なら等しい。正規化した後で比べる（§4.3）
-!pending m3
 A1..B2 = (B2..A1)
 => true
 
-!pending m3
 A1..A3 = (A1..A2)
 => false
 
@@ -513,7 +511,6 @@ A1..A3 collect: [:c | c value]
 => #(1 nil 3)
 
 "そのため空セルを含む算術はエラーになる（ADR-0010）
-!pending m3
 !A1 := 1
 !A3 := 3
 A1..A3 collect: [:c | c * 2]
@@ -766,7 +763,6 @@ A1..A3 collect: [:c | c ifNil: [0]]
 => true
 
 "範囲だけは要素ではなく矩形で比べる。座標の対であって値の入れ物ではない（§4.3）
-!pending m3
 !A1 := 1
 !A2 := 2
 !B1 := 1
@@ -784,7 +780,6 @@ A1..A2 = (B1..B2)
 (1 to: 3) ~= (1 to: 4)
 => true
 
-!pending m3
 !A1 := 1
 !A2 := 2
 !A3 := 3
