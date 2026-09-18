@@ -1,0 +1,13 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    // web はブラウザの上で動くので DOM を読み込む。core と違って Node API は読まない
+    // （依存方向は core ← web の一方向、要件 §7。ADR-0026）。
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    // `vite/client` は CSS の副作用 import と `import.meta.env` の型を持つ。
+    // Node の型は入らないので、`process` を書けば従来どおり型エラーになる。
+    "types": ["vite/client"],
+    "jsx": "react-jsx"
+  },
+  "include": ["src/**/*.ts", "src/**/*.tsx"]
+}

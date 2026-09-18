@@ -49,6 +49,12 @@ jobs:
         if: '!cancelled()'
         run: pnpm sec bench
 
+      # デモ（M3.5）が壊れていないこと。型検査とテストは通っても、Vite の解決や
+      # プラグインの設定が壊れれば配れない（ADR-0026）。
+      - name: Web のビルド
+        if: '!cancelled()'
+        run: pnpm build
+
       - name: カバレッジレポートを保存
         if: '!cancelled()'
         uses: actions/upload-artifact@v4
