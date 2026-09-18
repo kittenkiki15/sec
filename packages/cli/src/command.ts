@@ -9,6 +9,7 @@
  */
 
 import { evaluateFormula, NotImplementedError, printValue } from '@sec/core/eval';
+import { exceedances, formatReport, measure, parseCells, scenarios } from './bench.ts';
 
 /** `sec` の 1 回の実行が生む出力。**process には触れない**ので、そのままテストできる。 */
 export interface CommandResult {
@@ -27,7 +28,7 @@ export interface CommandResult {
 const EXIT = {
   /** 値が出た。 */
   value: 0,
-  /** 結果がエラー値だった。 */
+  /** 結果がエラー値だった、または計測が性能要件のしきい値を超えた。 */
   error: 1,
   /** 使い方が誤っている、またはまだ実装していない機能に当たった。 */
   usage: 2,
@@ -35,17 +36,19 @@ const EXIT = {
 
 const USAGE = `使い方: sec <サブコマンド> [引数...]
 
-  sec eval <式>   数式を 1 つ評価して結果を表示する
-  sec --help      この使い方を表示する
+  sec eval <式>       数式を 1 つ評価して結果を表示する
+  sec bench [セル数]  性能要件（N-1・N-2）を計測する（既定は 10000 セル）
+  sec --help          この使い方を表示する
 
 終了コード:
-  0  値が出た
-  1  結果がエラー値だった
+  0  値が出た / 計測がしきい値の中だった
+  1  結果がエラー値だった / 計測がしきい値を超えた
   2  使い方が誤っている、またはまだ実装していない機能に当たった
 
 例:
   sec eval '3 + 4 * 2'
   sec eval '#(1 2 3 4) inject: 0 into: [:a :b | a + b]'
+  sec bench
 `;
 
 /**
@@ -63,10 +66,30 @@ export function runCommand(argv: readonly string[]): CommandResult {
   if (subcommand === undefined) {
     return usageError('サブコマンドがありません。');
   }
-  if (subcommand !== 'eval') {
-    return usageError(`"${subcommand}" というサブコマンドはありません。`);
-  }
-  return runEval(rest);
+  if (subcommand === 'eval') return runEval(rest);
+  if (subcommand === 'bench') return runBench(rest);
+  return usageError(`"${subcommand}" というサブコマンドはありません。`);
+}
+
+/**
+ * `sec bench [セル数]`。
+ *
+ * **合否を終了コードに出す。** 開発方針のリスク表が言う「CI で回帰を検出する」は、
+ * ログの数字を人間が読む形では成り立たない。判断の中身は `bench.ts` にある。
+ */
+function runBench(args: readonly string[]): CommandResult {
+  const parsed = parseCells(args);
+  if ('error' in parsed) return usageError(parsed.error);
+
+  const measurements = scenarios(parsed.cells).map((scenario) => measure(scenario));
+  const failures = exceedances(measurements, parsed.cells);
+
+  return {
+    // **レポートは超過していても出す。** どれだけ超えたかが分からないと直しようがない。
+    stdout: formatReport(measurements, parsed.cells),
+    stderr: failures.map((failure) => `${failure}\n`).join(''),
+    exitCode: failures.length === 0 ? EXIT.value : EXIT.error,
+  };
 }
 
 /**
