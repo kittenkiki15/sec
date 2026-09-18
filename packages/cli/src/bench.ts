@@ -23,6 +23,27 @@ import { type CellAddress, columnAt, LiveSheet } from '@sec/core/model';
 /** 要件 N-1・N-2 が数字を定めている規模。 */
 export const REQUIRED_CELLS = 10_000;
 
+/**
+ * 測れるセル数の上限。**要件の規模の 10 倍で、実測で決めた値。**
+ *
+ * **「終端に到達する」ことと「現実の時間で終わる」ことは別である。** 数として
+ * 表せる上限（`Number.MAX_SAFE_INTEGER`）まで受けると、`index += 1` が終端に届く
+ * ことは保証されるが、**シナリオはそのセル数だけ内容を作る**ので、ヒープを使い切るか
+ * 何年も終わらない。**利用者は誤りを言われないまま固まったプロセスを見る。**
+ *
+ * 手元の計測（Node 22）:
+ *
+ * | セル数 | 全体の所要 | フル再計算（範囲集計） |
+ * | --- | --- | --- |
+ * | 10,000（要件の規模） | 約 2.5 秒 | 91ms |
+ * | 100,000 | 約 45 秒 | 3.8 秒 |
+ * | 500,000 | **3 分で終わらない** | — |
+ *
+ * **上限は「探索に使えるうちで最大」という基準で採った。** 100,000 は 45 秒で返るが、
+ * その 5 倍は返ってこない。
+ */
+export const MAX_CELLS = 100_000;
+
 /** 性能要件のしきい値（ミリ秒）。**要件定義書 §6 の数字をそのまま写したもの。** */
 export const LIMIT = {
   /** 要件 N-2: 10,000 セルのフル再計算を 1 秒以内。 */
@@ -331,11 +352,9 @@ export function parseCells(args: readonly string[]): ParsedCells {
   if (cells <= 0) return { error: 'セル数は 1 以上にしてください。' };
 
   // **上限の検査を落とさない。** 倍精度に収まらない綴りは `Infinity` になり、
-  // `Infinity <= 0` は false なので上の検査を通ってしまう。シナリオは 1 ずつ
-  // 数え上げるので、**構築が終端に到達せず `sec bench` が停止しなくなる。**
-  // 安全な整数の外（`2^53` 超）も、1 を足しても値が動かないので同じことが起きる。
-  if (!Number.isSafeInteger(cells)) {
-    return { error: `セル数 "${spelling}" は大きすぎます。${Number.MAX_SAFE_INTEGER} までです。` };
+  // `Infinity <= 0` は false なので上の検査を通ってしまう。
+  if (cells > MAX_CELLS) {
+    return { error: `セル数 "${spelling}" は大きすぎます。${MAX_CELLS} までです。` };
   }
   return { cells };
 }

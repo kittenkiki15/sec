@@ -4,6 +4,7 @@ import {
   exceedances,
   formatReport,
   LIMIT,
+  MAX_CELLS,
   type Measurement,
   measure,
   parseCells,
@@ -250,10 +251,16 @@ describe('引数の解釈', () => {
     expect(parseCells([String(Number.MAX_SAFE_INTEGER + 2)])).toHaveProperty('error');
   });
 
-  it('安全な整数の上限そのものは受ける', () => {
-    expect(parseCells([String(Number.MAX_SAFE_INTEGER)])).toEqual({
-      cells: Number.MAX_SAFE_INTEGER,
-    });
+  // **期待値を反転させたのは仕様が変わったからである**（実装の出力に合わせたのではない）。
+  // 安全な整数であることは `index += 1` が終端に届くことしか保証せず、**現実の時間で
+  // 終わることは保証しない。** 測れる上限を別に設けた（`MAX_CELLS`）。
+  it('安全な整数でも測れる上限を超えたら受けない', () => {
+    expect(parseCells([String(Number.MAX_SAFE_INTEGER)])).toHaveProperty('error');
+    expect(parseCells([String(MAX_CELLS + 1)])).toHaveProperty('error');
+  });
+
+  it('測れる上限そのものは受ける', () => {
+    expect(parseCells([String(MAX_CELLS)])).toEqual({ cells: MAX_CELLS });
   });
 
   it('引数が 2 つ以上あれば理由を言う', () => {
