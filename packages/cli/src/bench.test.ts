@@ -238,6 +238,24 @@ describe('引数の解釈', () => {
     expect(parseCells(['1.5'])).toHaveProperty('error');
   });
 
+  // 倍精度に収まらない綴りは Infinity になる。**`<= 0` は false なので通ってしまい**、
+  // シナリオの構築が終端に到達しなくなる（`for (… index < cells …)` が止まらない）。
+  it('倍精度に収まらない大きさは受けない', () => {
+    expect(parseCells(['9'.repeat(400)])).toHaveProperty('error');
+  });
+
+  // Infinity にならなくても、安全な整数の外では 1 ずつ数え上げる側が進まなくなる。
+  it('安全な整数の外は受けない', () => {
+    expect(parseCells([`1${'0'.repeat(23)}`])).toHaveProperty('error');
+    expect(parseCells([String(Number.MAX_SAFE_INTEGER + 2)])).toHaveProperty('error');
+  });
+
+  it('安全な整数の上限そのものは受ける', () => {
+    expect(parseCells([String(Number.MAX_SAFE_INTEGER)])).toEqual({
+      cells: Number.MAX_SAFE_INTEGER,
+    });
+  });
+
   it('引数が 2 つ以上あれば理由を言う', () => {
     expect(parseCells(['100', '200'])).toHaveProperty('error');
   });

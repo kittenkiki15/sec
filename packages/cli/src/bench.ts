@@ -329,5 +329,13 @@ export function parseCells(args: readonly string[]): ParsedCells {
 
   const cells = Number(spelling);
   if (cells <= 0) return { error: 'セル数は 1 以上にしてください。' };
+
+  // **上限の検査を落とさない。** 倍精度に収まらない綴りは `Infinity` になり、
+  // `Infinity <= 0` は false なので上の検査を通ってしまう。シナリオは 1 ずつ
+  // 数え上げるので、**構築が終端に到達せず `sec bench` が停止しなくなる。**
+  // 安全な整数の外（`2^53` 超）も、1 を足しても値が動かないので同じことが起きる。
+  if (!Number.isSafeInteger(cells)) {
+    return { error: `セル数 "${spelling}" は大きすぎます。${Number.MAX_SAFE_INTEGER} までです。` };
+  }
   return { cells };
 }
