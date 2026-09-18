@@ -9,7 +9,14 @@
  */
 
 import { evaluateFormula, NotImplementedError, printValue } from '@sec/core/eval';
-import { exceedances, formatReport, measure, parseCells, scenarios } from './bench.ts';
+import {
+  exceedances,
+  formatReport,
+  type Measurement,
+  measure,
+  parseCells,
+  scenarios,
+} from './bench.ts';
 
 /** `sec` の 1 回の実行が生む出力。**process には触れない**ので、そのままテストできる。 */
 export interface CommandResult {
@@ -81,12 +88,28 @@ function runBench(args: readonly string[]): CommandResult {
   const parsed = parseCells(args);
   if ('error' in parsed) return usageError(parsed.error);
 
-  const measurements = scenarios(parsed.cells).map((scenario) => measure(scenario));
-  const failures = exceedances(measurements, parsed.cells);
+  return benchResult(
+    scenarios(parsed.cells).map((scenario) => measure(scenario)),
+    parsed.cells,
+  );
+}
+
+/**
+ * 計測を出力と終了コードに直す。**CI が性能の回帰で落ちる経路そのもの。**
+ *
+ * **計測から切り離してあるのは、この変換を測らずに検査できるようにするため。**
+ * 実時間に依存する経路に埋めてしまうと、しきい値を超えたときの振る舞いを
+ * 固定する手段が無くなり、**壊れても「速いから緑」で気付けない。**
+ *
+ * @param measurements 各シナリオの計測
+ * @param cells 測ったセル数。**しきい値を当てる規模かどうかの判断に要る**
+ */
+export function benchResult(measurements: readonly Measurement[], cells: number): CommandResult {
+  const failures = exceedances(measurements, cells);
 
   return {
     // **レポートは超過していても出す。** どれだけ超えたかが分からないと直しようがない。
-    stdout: formatReport(measurements, parsed.cells),
+    stdout: formatReport(measurements, cells),
     stderr: failures.map((failure) => `${failure}\n`).join(''),
     exitCode: failures.length === 0 ? EXIT.value : EXIT.error,
   };

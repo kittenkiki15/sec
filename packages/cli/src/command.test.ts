@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { runCommand } from './command.ts';
+import { LIMIT, type Measurement, REQUIRED_CELLS } from './bench.ts';
+import { benchResult, runCommand } from './command.ts';
 
 describe('sec eval', () => {
   it('式を評価して値を表示する', () => {
@@ -135,5 +136,43 @@ describe('sec bench', () => {
 
   it('使い方に bench が載っている', () => {
     expect(runCommand(['--help']).stdout).toContain('bench');
+  });
+});
+
+describe('ベンチの計測を出力に直す', () => {
+  const measured = (fullMs: number, incrementalMs: number): Measurement => ({
+    scenario: 'テスト',
+    description: 'テストの形',
+    cells: REQUIRED_CELLS,
+    fullMs,
+    incrementalMs,
+    recalculated: 1,
+  });
+
+  // **CI が回帰で落ちる経路そのもの。** ここが壊れると、しきい値を超えても緑になる。
+  it('しきい値を超えたら終了コード 1 と理由を返す', () => {
+    const result = benchResult(
+      [measured(LIMIT.fullMs + 1, LIMIT.incrementalMs + 1)],
+      REQUIRED_CELLS,
+    );
+    expect(result.exitCode).toBe(1);
+    expect(result.stderr).toContain('N-2');
+    expect(result.stderr).toContain('N-1');
+  });
+
+  // 超過していてもレポートは出す。どれだけ超えたかが分からないと直しようがない。
+  it('超過してもレポートは stdout に出す', () => {
+    const result = benchResult([measured(9999, 9999)], REQUIRED_CELLS);
+    expect(result.stdout).toContain('テスト');
+  });
+
+  it('しきい値の中なら終了コード 0 で stderr は空', () => {
+    const result = benchResult([measured(1, 1)], REQUIRED_CELLS);
+    expect(result).toMatchObject({ stderr: '', exitCode: 0 });
+  });
+
+  // 要件が数字を定めていない規模では合否を出さない（bench.ts の exceedances）。
+  it('要件が定めていないセル数なら超過していても終了コード 0', () => {
+    expect(benchResult([measured(9999, 9999)], 500).exitCode).toBe(0);
   });
 });

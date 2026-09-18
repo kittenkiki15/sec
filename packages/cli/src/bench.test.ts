@@ -50,12 +50,20 @@ describe('スカラ鎖のシナリオ', () => {
     }
   });
 
+  // **要件 N-1 が言う「平均依存度 3」はブック全体の値である。** 数式セルだけを見て
+  // 3 だと言っても、定数セルを含めた本当の負荷はそれより軽い。
+  it('ブック全体の平均依存度が要件の 3 に近い', () => {
+    const contents = scalarChain(REQUIRED_CELLS).contents;
+    const edges = contents.filter(([, content]) => content.startsWith('=')).length * 3;
+    expect(edges / contents.length).toBeGreaterThan(2.9);
+  });
+
   // 増分再計算（要件 N-1）が測る形。**下流が同じ行に閉じている**ことがこの形の眼目。
   it('定数を 1 つ変えると同じ行の数式セルだけが計算し直される', () => {
+    // 1 行ちょうどの大きさ。変えたセル自身 + 同じ行の数式セル 97 つ
     const scenario = scalarChain(100);
     const live = new LiveSheet(scenario.contents);
-    // 変えたセル自身 + 同じ行の数式セル 7 つ
-    expect(live.put(scenario.edit.address, '999')).toHaveLength(8);
+    expect(live.put(scenario.edit.address, '999')).toHaveLength(98);
   });
 
   it('セル数が少なくても壊れない', () => {
@@ -153,7 +161,7 @@ describe('計測', () => {
       fullRuns: 1,
       incrementalRuns: 1,
     });
-    expect(measured.recalculated).toBe(8);
+    expect(measured.recalculated).toBe(98);
     expect(measured.cells).toBe(100);
   });
 
