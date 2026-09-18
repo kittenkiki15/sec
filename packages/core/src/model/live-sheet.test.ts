@@ -22,7 +22,7 @@ function liveSheetOf(contents: Record<string, string>, options?: LiveSheetOption
 }
 
 /** セルの値を §0.3 の表記で取る。 */
-function valueOf(live: LiveSheet, spelling: string): string {
+function cellValue(live: LiveSheet, spelling: string): string {
   return printValue(live.values(addressOf(spelling)));
 }
 
@@ -34,7 +34,8 @@ function put(live: LiveSheet, spelling: string, content: string): readonly strin
 /** 同じ内容をフル再計算したときの値（§0.3 の表記）。 */
 function fullRecalculation(contents: Record<string, string>): (spelling: string) => string {
   const sheet = new Sheet();
-  for (const [spelling, content] of Object.entries(contents)) sheet.put(addressOf(spelling), content);
+  for (const [spelling, content] of Object.entries(contents))
+    sheet.put(addressOf(spelling), content);
   const values = recalculate(sheet);
   return (spelling) => printValue(values(addressOf(spelling)));
 }
@@ -49,12 +50,12 @@ describe('LiveSheet の構築（要件 F-4-2）', () => {
 
   it('構築した時点で数式セルの値が出る（フル再計算）', () => {
     const live = liveSheetOf({ A1: '1', B1: '=A1 + 1', C1: '=B1 * 10' });
-    expect(valueOf(live, 'C1')).toBe('20');
+    expect(cellValue(live, 'C1')).toBe('20');
   });
 
   it('内容を置く順序に依らない', () => {
     const live = liveSheetOf({ C1: '=B1 * 10', B1: '=A1 + 1', A1: '1' });
-    expect(valueOf(live, 'C1')).toBe('20');
+    expect(cellValue(live, 'C1')).toBe('20');
   });
 
   it('解決できない番地へは置けない（Sheet と同じ）', () => {
@@ -67,60 +68,60 @@ describe('LiveSheet の構築（要件 F-4-2）', () => {
 describe('LiveSheet の増分再計算（要件 F-4-2）', () => {
   it('定数を書き換えると、それを読む数式の値が変わる', () => {
     const live = liveSheetOf({ A1: '1', B1: '=A1 + 1' });
-    expect(valueOf(live, 'B1')).toBe('2');
+    expect(cellValue(live, 'B1')).toBe('2');
 
     put(live, 'A1', '10');
-    expect(valueOf(live, 'A1')).toBe('10');
-    expect(valueOf(live, 'B1')).toBe('11');
+    expect(cellValue(live, 'A1')).toBe('10');
+    expect(cellValue(live, 'B1')).toBe('11');
   });
 
   it('数式そのものを書き換えると値が変わる', () => {
     const live = liveSheetOf({ A1: '1', B1: '=A1 + 1' });
     put(live, 'B1', '=A1 * 100');
-    expect(valueOf(live, 'B1')).toBe('100');
+    expect(cellValue(live, 'B1')).toBe('100');
   });
 
   it('下流の下流まで伝わる', () => {
     const live = liveSheetOf({ A1: '1', B1: '=A1 + 1', C1: '=B1 * 10' });
     put(live, 'A1', '4');
-    expect(valueOf(live, 'C1')).toBe('50');
+    expect(cellValue(live, 'C1')).toBe('50');
   });
 
   it('空セルに内容を入れると、それを読んでいた数式が変わる（ADR-0010）', () => {
     const live = liveSheetOf({ B1: '=A1 ifNil: [0]' });
-    expect(valueOf(live, 'B1')).toBe('0');
+    expect(cellValue(live, 'B1')).toBe('0');
 
     put(live, 'A1', '5');
-    expect(valueOf(live, 'B1')).toBe('5');
+    expect(cellValue(live, 'B1')).toBe('5');
   });
 
   it('セルを空にすると、それを読んでいた数式が変わる（ADR-0010）', () => {
     const live = liveSheetOf({ A1: '5', B1: '=A1 ifNil: [0]' });
-    expect(valueOf(live, 'B1')).toBe('5');
+    expect(cellValue(live, 'B1')).toBe('5');
 
     put(live, 'A1', '');
     expect(live.contentAt(addressOf('A1'))).toBe('');
-    expect(valueOf(live, 'B1')).toBe('0');
+    expect(cellValue(live, 'B1')).toBe('0');
   });
 
   it('数式を定数に書き換えても下流が追随する', () => {
     const live = liveSheetOf({ A1: '1', B1: '=A1 + 1', C1: '=B1 * 10' });
     put(live, 'B1', '7');
-    expect(valueOf(live, 'C1')).toBe('70');
+    expect(cellValue(live, 'C1')).toBe('70');
   });
 
   it('範囲の中のセルを書き換えると集計が変わる', () => {
     const live = liveSheetOf({ A1: '1', A2: '2', B1: '=A1..A3 sum' });
-    expect(valueOf(live, 'B1')).toBe('3');
+    expect(cellValue(live, 'B1')).toBe('3');
 
     put(live, 'A3', '10');
-    expect(valueOf(live, 'B1')).toBe('13');
+    expect(cellValue(live, 'B1')).toBe('13');
   });
 
   it('範囲の外のセルを書き換えても集計は変わらない', () => {
     const live = liveSheetOf({ A1: '1', A2: '2', B1: '=A1..A3 sum' });
     put(live, 'A4', '100');
-    expect(valueOf(live, 'B1')).toBe('3');
+    expect(cellValue(live, 'B1')).toBe('3');
   });
 
   // **増分でもトポロジカル順序で回す検査**（段階 5 と同じ理由）。下流へ潜って評価すると、
@@ -129,47 +130,47 @@ describe('LiveSheet の増分再計算（要件 F-4-2）', () => {
     const contents: Record<string, string> = { A1: '1' };
     for (let row = 2; row <= 1000; row += 1) contents[`A${row}`] = `=A${row - 1} + 1`;
     const live = liveSheetOf(contents);
-    expect(valueOf(live, 'A1000')).toBe('1000');
+    expect(cellValue(live, 'A1000')).toBe('1000');
 
     put(live, 'A1', '2');
-    expect(valueOf(live, 'A1000')).toBe('1001');
+    expect(cellValue(live, 'A1000')).toBe('1001');
   });
 });
 
 describe('LiveSheet と循環参照（要件 F-4-3）', () => {
   it('編集で循環を作ると #Circular になる', () => {
     const live = liveSheetOf({ A1: '1', B1: '=A1' });
-    expect(valueOf(live, 'B1')).toBe('1');
+    expect(cellValue(live, 'B1')).toBe('1');
 
     put(live, 'A1', '=B1');
-    expect(valueOf(live, 'A1')).toBe('#Circular');
-    expect(valueOf(live, 'B1')).toBe('#Circular');
+    expect(cellValue(live, 'A1')).toBe('#Circular');
+    expect(cellValue(live, 'B1')).toBe('#Circular');
   });
 
   it('編集で循環を解くと値が戻る', () => {
     const live = liveSheetOf({ A1: '=B1', B1: '=A1' });
-    expect(valueOf(live, 'A1')).toBe('#Circular');
+    expect(cellValue(live, 'A1')).toBe('#Circular');
 
     put(live, 'B1', '3');
-    expect(valueOf(live, 'A1')).toBe('3');
-    expect(valueOf(live, 'B1')).toBe('3');
+    expect(cellValue(live, 'A1')).toBe('3');
+    expect(cellValue(live, 'B1')).toBe('3');
   });
 
   it('3 つの巡りを解いても全員が値を取り戻す', () => {
     const live = liveSheetOf({ A1: '=B1', B1: '=C1', C1: '=A1' });
-    expect(valueOf(live, 'B1')).toBe('#Circular');
+    expect(cellValue(live, 'B1')).toBe('#Circular');
 
     put(live, 'C1', '7');
-    expect(valueOf(live, 'A1')).toBe('7');
-    expect(valueOf(live, 'B1')).toBe('7');
+    expect(cellValue(live, 'A1')).toBe('7');
+    expect(cellValue(live, 'B1')).toBe('7');
   });
 
   it('循環に巻き込まれていたセルも、循環が解ければ値を持つ', () => {
     const live = liveSheetOf({ A1: '=A1', B1: '=A1 + 1' });
-    expect(valueOf(live, 'B1')).toBe('#Circular');
+    expect(cellValue(live, 'B1')).toBe('#Circular');
 
     put(live, 'A1', '10');
-    expect(valueOf(live, 'B1')).toBe('11');
+    expect(cellValue(live, 'B1')).toBe('11');
   });
 });
 
@@ -182,10 +183,10 @@ describe('LiveSheet の無効化は記録した読みで行う（ADR-0024）', (
       A2: '1',
       C4: '2',
     });
-    expect(valueOf(live, 'A1')).toBe('3');
+    expect(cellValue(live, 'A1')).toBe('3');
 
     put(live, 'B3', '10');
-    expect(valueOf(live, 'A1')).toBe('13');
+    expect(cellValue(live, 'A1')).toBe('13');
   });
 
   // **短絡して読まなかったセルは依存ではない。** ADR-0023 が案 B の欠点として挙げていた点だが、
@@ -198,13 +199,13 @@ describe('LiveSheet の無効化は記録した読みで行う（ADR-0024）', (
       C1: '2',
       D1: '=A1 isTrue ifTrue: [B1] ifFalse: [C1]',
     });
-    expect(valueOf(live, 'D1')).toBe('1');
+    expect(cellValue(live, 'D1')).toBe('1');
 
     put(live, 'C1', '99');
-    expect(valueOf(live, 'D1')).toBe('1');
+    expect(cellValue(live, 'D1')).toBe('1');
 
     put(live, 'A1', 'false');
-    expect(valueOf(live, 'D1')).toBe('99');
+    expect(cellValue(live, 'D1')).toBe('99');
   });
 });
 
@@ -223,8 +224,8 @@ describe('put が返す、計算し直したセル（要件 F-4-2）', () => {
   it('範囲の大きさしか使わない数式は、範囲の中のセルを書き換えても計算し直さない', () => {
     const live = liveSheetOf({ A1: '1', A2: '2', B1: '=A1..A2 sum', B2: '=A1..A2 size' });
     expect(put(live, 'A2', '5')).toEqual(['A2', 'B1']);
-    expect(valueOf(live, 'B1')).toBe('6');
-    expect(valueOf(live, 'B2')).toBe('2');
+    expect(cellValue(live, 'B1')).toBe('6');
+    expect(cellValue(live, 'B2')).toBe('2');
   });
 
   it('空にしたセルの下流も返る', () => {
@@ -254,19 +255,19 @@ describe('LiveSheet はフル再計算と同じ値を出す（要件 F-4-4）', 
       C1: '=A3',
     });
     for (const spelling of ['A1', 'A2', 'A3', 'B1', 'C1', 'D9']) {
-      expect(valueOf(live, spelling)).toBe(expected(spelling));
+      expect(cellValue(live, spelling)).toBe(expected(spelling));
     }
   });
 
   it('循環を作ってから解いた後も、作り直した値と一致する', () => {
     const live = liveSheetOf({ A1: '1', B1: '=A1 + 1', C1: '=B1' });
     put(live, 'A1', '=C1');
-    expect(valueOf(live, 'C1')).toBe('#Circular');
+    expect(cellValue(live, 'C1')).toBe('#Circular');
 
     put(live, 'A1', '2');
     const expected = fullRecalculation({ A1: '2', B1: '=A1 + 1', C1: '=B1' });
     for (const spelling of ['A1', 'B1', 'C1']) {
-      expect(valueOf(live, spelling)).toBe(expected(spelling));
+      expect(cellValue(live, spelling)).toBe(expected(spelling));
     }
   });
 });
@@ -300,13 +301,16 @@ describe('無効化の索引は差し替えられる（ADR-0024）', () => {
 
     const expected = fullRecalculation({ ...contents, B3: '10' });
     for (const spelling of ['A1', 'D1']) {
-      expect(valueOf(live, spelling)).toBe(expected(spelling));
+      expect(cellValue(live, spelling)).toBe(expected(spelling));
     }
   });
 
   it('依存の抽出を差し替えても値は変わらない（ADR-0023）', () => {
-    const live = liveSheetOf({ A1: '1', B1: '=A1 + 1', C1: '=B1 * 10' }, { dependencies: () => [] });
+    const live = liveSheetOf(
+      { A1: '1', B1: '=A1 + 1', C1: '=B1 * 10' },
+      { dependencies: () => [] },
+    );
     put(live, 'A1', '2');
-    expect(valueOf(live, 'C1')).toBe('30');
+    expect(cellValue(live, 'C1')).toBe('30');
   });
 });
