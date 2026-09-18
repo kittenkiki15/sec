@@ -40,7 +40,6 @@ export class LiveSheet {
   ) {
     for (const [address, content] of contents) this.#sheet.put(address, content);
     this.#recalculation = new Recalculation(this.#sheet, options);
-    this.#recalculation.recalculateAll();
   }
 
   /** 番地からそのセルが保持する値を答える（§4.2）。**評価器にそのまま渡せる形。** */

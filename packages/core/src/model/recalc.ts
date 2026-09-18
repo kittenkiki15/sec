@@ -68,8 +68,9 @@ export interface RecalculationOptions {
 /**
  * シートの値を保つもの。**内容が変わったセルを伝えると、下流だけを計算し直す**（要件 F-4-2）。
  *
- * **直接使うのは `LiveSheet` だけである。** シートへの書き込みと無効化は対で起きなければ
- * ならず（伝え忘れた値は古いまま残る）、**対にする責任を 1 箇所へ集めてある。**
+ * **変更を伝える相手は `LiveSheet` だけである。** シートへの書き込みと無効化は対で
+ * 起きなければならず（伝え忘れた値は古いまま残る）、**対にする責任を 1 箇所へ集めてある。**
+ * 1 度きりでよい呼び出し側は、下の `recalculate` を使う。
  */
 export class Recalculation {
   readonly #sheet: Sheet;
@@ -93,25 +94,21 @@ export class Recalculation {
    */
   readonly #reads: CellAddress[][] = [];
 
+  /** **作った時点でシート全体を再計算する**（フル再計算、要件 F-4-2）。 */
   constructor(sheet: Sheet, options: RecalculationOptions = {}) {
     this.#sheet = sheet;
     this.#extract = options.dependencies ?? staticDependencies;
     this.#index = (options.invalidation ?? recordedReads)();
-  }
 
-  /** 番地からそのセルが保持する値を答える（§4.2）。**評価器にそのまま渡せる形。** */
-  readonly values: CellValues = (address) => this.#valueAt(address);
-
-  /** すべての数式セルを評価する（フル再計算、要件 F-4-2）。 */
-  recalculateAll(): void {
-    this.#formulas.clear();
-    this.#values.clear();
     for (const address of this.#sheet.addresses()) this.#refreshFormula(address);
     this.#evaluate(
       this.#formulas,
       [...this.#formulas.values()].map((cell) => cell.address),
     );
   }
+
+  /** 番地からそのセルが保持する値を答える（§4.2）。**評価器にそのまま渡せる形。** */
+  readonly values: CellValues = (address) => this.#valueAt(address);
 
   /**
    * 内容の変わったセルを伝え、下流だけを計算し直す（増分再計算、要件 F-4-2）。
@@ -205,10 +202,11 @@ export class Recalculation {
   }
 
   #valueAt(address: CellAddress): HeldValue {
-    this.#noteRead(address);
-
     // 解決できない番地に値は無い。§4.2 が先に `#Ref` を返すので、評価器からは来ない。
+    // **読みにも数えない。** 内容を置けない番地なので、変更されることがない。
     if (!isResolvable(address)) return NIL;
+
+    this.#noteRead(address);
 
     const key = printAddress(address);
     const known = this.#values.get(key);
@@ -271,9 +269,7 @@ export class Recalculation {
  * @returns 番地からそのセルが保持する値を答える関数（§4.2）
  */
 export function recalculate(sheet: Sheet, options: RecalculationOptions = {}): CellValues {
-  const recalculation = new Recalculation(sheet, options);
-  recalculation.recalculateAll();
-  return recalculation.values;
+  return new Recalculation(sheet, options).values;
 }
 
 /**
