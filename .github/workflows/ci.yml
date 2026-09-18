@@ -43,6 +43,12 @@ jobs:
         if: '!cancelled()'
         run: pnpm coverage
 
+      # 性能要件（N-1 / N-2）の回帰を検出する（開発方針のリスク表）。
+      # しきい値を超えると終了コード 1 になるので、ログの数字を読まずに落ちる。
+      - name: ベンチマーク
+        if: '!cancelled()'
+        run: pnpm sec bench
+
       - name: カバレッジレポートを保存
         if: '!cancelled()'
         uses: actions/upload-artifact@v4
