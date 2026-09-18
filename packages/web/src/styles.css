@@ -1,0 +1,47 @@
+/* M3.5 は縦切りなので、体裁は「表として読めること」だけを満たす（要件 F-7 は M6）。 */
+
+:root {
+  font-family: system-ui, sans-serif;
+  color-scheme: light dark;
+}
+
+main {
+  margin: 2rem;
+}
+
+.grid {
+  border-collapse: collapse;
+}
+
+.grid th,
+.grid td {
+  border: 1px solid CanvasText;
+  height: 1.8rem;
+  min-width: 6rem;
+  padding: 0 0.3rem;
+  text-align: left;
+}
+
+.grid th {
+  background: Canvas;
+  font-weight: 600;
+  text-align: center;
+}
+
+.grid td:focus-visible {
+  outline: 2px solid Highlight;
+  outline-offset: -2px;
+}
+
+/* エラーは種別を問わず同じ印にする。種別ごとの説明は F-7-4（M6）。 */
+.grid td[data-error] {
+  color: #b00020;
+  font-weight: 600;
+}
+
+.grid input {
+  border: 0;
+  font: inherit;
+  inline-size: 100%;
+  outline: none;
+}
