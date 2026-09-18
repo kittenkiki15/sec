@@ -10,6 +10,13 @@ fi
 
 cd "${CLAUDE_PROJECT_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)}"
 
+# コミットの名義をリポジトリの中だけで固定する。
+# 環境側の既定に任せていた頃、アカウントに登録されたメールアドレスで
+# 記録された履歴が残った。GitHub はアドレスで著者を引き当てるため、
+# そのアドレスを持つアカウントに紐づいてしまう。
+git config --local user.name "Claude"
+git config --local user.email "noreply@anthropic.com"
+
 # pnpm が無ければ corepack で package.json の packageManager に合わせて用意する。
 if ! command -v pnpm >/dev/null 2>&1; then
   echo "pnpm が見つからないため corepack で有効化します。"
