@@ -1,4 +1,4 @@
-import { LiveSheet } from '@sec/core/model';
+import { LiveSheet, printAddress } from '@sec/core/model';
 import { describe, expect, it } from 'vitest';
 import {
   exceedances,
@@ -11,6 +11,7 @@ import {
   REQUIRED_CELLS,
   rangeAggregate,
   scalarChain,
+  scenarios,
 } from './bench.ts';
 
 /** 呼ばれた順に読みを返す時計。**計測の桁が実時間で揺れないようにする。** */
@@ -30,14 +31,14 @@ describe('スカラ鎖のシナリオ', () => {
     expect(scalarChain(97).contents).toHaveLength(97);
   });
 
-  // 要件 N-1 が言う「平均依存度 3」。数式セルはどれもちょうど 3 つ読む。
-  it('数式セルはどれも 3 つの別々のセルに依存する', () => {
+  // 読む相手が重なっていると辺が減る。**数え上げの前提。**
+  it('数式セルは 3 つ以上の別々のセルを読む', () => {
     const formulas = scalarChain(100).contents.filter(([, content]) => content.startsWith('='));
     expect(formulas.length).toBeGreaterThan(0);
     for (const [, content] of formulas) {
       const referenced = content.slice(1).split(' + ');
-      expect(referenced).toHaveLength(3);
-      expect(new Set(referenced).size).toBe(3);
+      expect(referenced.length).toBeGreaterThanOrEqual(3);
+      expect(new Set(referenced).size).toBe(referenced.length);
     }
   });
 
@@ -52,10 +53,15 @@ describe('スカラ鎖のシナリオ', () => {
 
   // **要件 N-1 が言う「平均依存度 3」はブック全体の値である。** 数式セルだけを見て
   // 3 だと言っても、定数セルを含めた本当の負荷はそれより軽い。
-  it('ブック全体の平均依存度が要件の 3 に近い', () => {
+  it('ブック全体の平均依存度がちょうど 3', () => {
     const contents = scalarChain(REQUIRED_CELLS).contents;
-    const edges = contents.filter(([, content]) => content.startsWith('=')).length * 3;
-    expect(edges / contents.length).toBeGreaterThan(2.9);
+    const edges = contents.reduce(
+      (sum, [, content]) =>
+        sum + (content.startsWith('=') ? content.slice(1).split(' + ').length : 0),
+      0,
+    );
+    expect(edges).toBe(3 * REQUIRED_CELLS);
+    expect(edges / contents.length).toBe(3);
   });
 
   // 増分再計算（要件 N-1）が測る形。**下流が同じ行に閉じている**ことがこの形の眼目。
@@ -298,5 +304,26 @@ describe('レポート', () => {
   it('要件が定めていないセル数では判定しないと書く', () => {
     expect(formatReport([measured], 500)).toContain('判定はしない');
     expect(formatReport([measured], REQUIRED_CELLS)).not.toContain('判定はしない');
+  });
+});
+
+describe('増分で書き換える内容', () => {
+  // **最初の 1 回から値が変わっていなければならない。** 同じ内容を置き直す put は
+  // 「1 セル変更」ではなく、内容の変化を見て省く実装が入ったときだけ短く出る。
+  it('どのシナリオも初期値と違う内容から始める', () => {
+    for (const scenario of scenarios(200)) {
+      const target = printAddress(scenario.edit.address);
+      const initial = scenario.contents.find(([address]) => printAddress(address) === target);
+      expect(initial).toBeDefined();
+      expect(scenario.edit.contents[0]).not.toBe(initial?.[1]);
+    }
+  });
+
+  it('繰り返しても隣り合う内容が同じにならない', () => {
+    for (const scenario of scenarios(200)) {
+      const { contents } = scenario.edit;
+      expect(contents.length).toBeGreaterThanOrEqual(2);
+      expect(new Set(contents).size).toBe(contents.length);
+    }
   });
 });
