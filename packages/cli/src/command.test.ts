@@ -96,3 +96,44 @@ describe('sec の使い方', () => {
     expect(short).toEqual(runCommand(['--help']));
   });
 });
+
+describe('sec bench', () => {
+  // 既定の 10,000 セルは実行に時間がかかるので、振る舞いは小さな規模で見る。
+  it('2 つのシナリオを計測してレポートを stdout に出す', () => {
+    const result = runCommand(['bench', '200']);
+    expect(result.stdout).toContain('スカラ鎖');
+    expect(result.stdout).toContain('範囲集計');
+    expect(result.exitCode).toBe(0);
+  });
+
+  // 数字を読まずに回帰を判定できることが、CI に載せる前提（開発方針のリスク表）。
+  it('しきい値の中なら終了コード 0 で stderr は空', () => {
+    const result = runCommand(['bench', '200']);
+    expect(result.stderr).toBe('');
+    expect(result.exitCode).toBe(0);
+  });
+
+  it('セル数が数値でなければ終了コード 2', () => {
+    const result = runCommand(['bench', 'いくつか']);
+    expect(result.stdout).toBe('');
+    expect(result.exitCode).toBe(2);
+  });
+
+  // 0 セルのシートは測る意味が無く、負の数は形として誤り。黙って直さない。
+  it('セル数が 0 以下なら終了コード 2', () => {
+    expect(runCommand(['bench', '0']).exitCode).toBe(2);
+    expect(runCommand(['bench', '-1']).exitCode).toBe(2);
+  });
+
+  it('小数のセル数は受け付けない', () => {
+    expect(runCommand(['bench', '1.5']).exitCode).toBe(2);
+  });
+
+  it('引数が 2 つ以上あれば終了コード 2', () => {
+    expect(runCommand(['bench', '100', '200']).exitCode).toBe(2);
+  });
+
+  it('使い方に bench が載っている', () => {
+    expect(runCommand(['--help']).stdout).toContain('bench');
+  });
+});
