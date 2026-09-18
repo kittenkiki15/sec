@@ -1,2 +1,7 @@
 packages:
   - 'packages/*'
+
+# esbuild は Vite（ADR-0026）が使うネイティブのバイナリを postinstall で取り出す。
+# 許可しないと vite の起動時に見つからない。
+onlyBuiltDependencies:
+  - esbuild
