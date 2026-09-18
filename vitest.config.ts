@@ -6,6 +6,7 @@ export default defineConfig({
       'packages/*/src/**/*.test.ts',
       'tests/**/*.test.mjs',
       '.github/scripts/**/*.test.mjs',
+      '.claude/hooks/**/*.test.mjs',
     ],
     coverage: {
       provider: 'v8',
