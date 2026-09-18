@@ -26,10 +26,13 @@
 | カバレッジ | `pnpm coverage` |
 | **まとめて実行（コミット前に必ず）** | `pnpm check` |
 | 式を評価して試す | `pnpm sec eval '3 + 4 * 2'` |
+| デモを開く | `pnpm dev`（10×10 のグリッド、M3.5） |
+| デモを束ねる | `pnpm build` |
 
 Node 22.18 以上、pnpm 10。パッケージを追加したら `package.json` の `typecheck` スクリプトに
-その `tsconfig.json` を足すこと。**ビルド段は無い。** `node` が `.ts` を直接読むので、
-型の除去が既定で有効な 22.18 以上が要る。
+その `tsconfig.json` を足すこと。**`core` と `cli` にビルド段は無い。** `node` が `.ts` を
+直接読むので、型の除去が既定で有効な 22.18 以上が要る。**`web` だけは Vite が束ねる**
+（[ADR-0026](docs/adr/0026-web-ui-stack.md)）。ブラウザは `.ts` を読めないため。
 
 `sec eval` の終了コードは **0（値）/ 1（エラー値）/ 2（使い方の誤り・未実装）**。
 `&&` でつなげば失敗が伝わるので、出力の字面を読まずに正誤を判定できる。
@@ -43,7 +46,10 @@ packages/web    グリッド UI、数式バー、マクロエディタ
 packages/mcp    MCP サーバー
 ```
 
-現時点で存在するのは `core` と `cli`。他はマイルストーンに従って追加する。
+現時点で存在するのは `core` と `cli` と `web`。`mcp` はマイルストーンに従って追加する。
+
+`web` は React + Vite で、DOM を伴うテストは vitest + happy-dom で回す（ADR-0026）。
+**DOM が要るテストはファイルの先頭に `// @vitest-environment happy-dom` を置く。**
 
 ### 破ってはいけない規約
 
