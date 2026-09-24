@@ -1014,3 +1014,69 @@ describe('evaluateMacro の実行上限（§7.8）', () => {
     expect(ran('^ (1 to: 1000) sum')).toBe('500500');
   });
 });
+
+describe('evaluateFormula の繰り返し（§7.6）', () => {
+  // do: の値が受け手であることはゴールデンテストが配列で固定している。区間と範囲も同じ。
+  it('do: は区間にも範囲にも受け手を返す', () => {
+    expect(evaluated('(1 to: 3) do: [:e | e]')).toBe('1 to: 3');
+    expect(evaluated('(A1 to: A2) do: [:c | c]')).toBe('A1:A2');
+  });
+
+  // collect: と同じく、要素が無ければブロックを評価しないので引数の数も問われない（§6.3）。
+  it('空の受け手には引数の数が合わないブロックも問われない', () => {
+    expect(evaluated('#() do: [1]')).toBe('#()');
+  });
+
+  it('do: の引数がブロックでなければ #TypeError', () => {
+    expect(evaluated('#(1 2) do: 1')).toBe('#TypeError');
+  });
+
+  // 引数の型は受け手のブロックを評価する前に検査する（§5.2 の条件式と同じ、§6.0 の検査の順序）。
+  it('whileTrue: の引数の型は、受け手のブロックを評価する前に問う', () => {
+    expect(evaluated('[1 / 0] whileTrue: 1')).toBe('#TypeError');
+  });
+
+  it('whileTrue: の受け手と本体のエラーは、そのまま式の値になる', () => {
+    expect(evaluated('[1 / 0] whileTrue: [1]')).toBe('#DivideByZero');
+    expect(evaluated('[true] whileTrue: [1 / 0]')).toBe('#DivideByZero');
+  });
+
+  it('whileTrue: の受け手は引数を取らないブロックでなければならない', () => {
+    expect(evaluated('[:x | true] whileTrue: [1]')).toBe('#TypeError');
+  });
+
+  it('do: にも実行上限が当たる', () => {
+    expect(evaluated('(1 to: 1e400) do: [:x | x]')).toBe('#Timeout');
+  });
+});
+
+// **ブロックの中の `^` はマクロ全体を終える**（§7.5）。ゴールデンテストは `do:` の 1 段だけを
+// 固定している。ここでは入れ子と再帰の内側、評価器の外の制御（整列）の中から抜けることを見る。
+describe('evaluateMacro の非局所リターン（§7.5）', () => {
+  it('入れ子のブロックの内側からでもマクロ全体を終える', () => {
+    expect(ran('#(1 2) do: [:e | #(3 4) do: [:f | ^ e * f]]. ^ 0')).toBe('3');
+  });
+
+  it('再帰の内側の起動からでもマクロ全体を終える', () => {
+    const source = '| f | f := [:n | n = 3 ifTrue: [^ n]. f value: n + 1]. f value: 0. ^ 99';
+    expect(ran(source)).toBe('3');
+  });
+
+  it('whileTrue: の本体から抜ける', () => {
+    const source = '| i | i := 0. [true] whileTrue: [i := i + 1. i = 5 ifTrue: [^ i]]. ^ 0';
+    expect(ran(source)).toBe('5');
+  });
+
+  it('整列の比較の中から抜ける', () => {
+    expect(ran('#(3 1 2) sorted: [:a :b | ^ 7]. ^ 0')).toBe('7');
+  });
+
+  // 返す値がエラーなら、そのエラーでマクロが終わる（ADR-0027）。
+  it('^ の値がエラーなら、そのエラーで終わる', () => {
+    expect(ran('#(1) do: [:e | ^ e / 0]. ^ 0')).toBe('#DivideByZero');
+  });
+
+  it('抜けるときに例外を呼び出し元へ漏らさない', () => {
+    expect(() => evaluateMacro('#(1) do: [:e | ^ e]. ^ 0')).not.toThrow();
+  });
+});

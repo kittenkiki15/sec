@@ -260,14 +260,12 @@ a := 1 / 0.
 
 "ブロックの中の ^ はマクロ全体を終える
 !macro
-!pending m4
 #(1 2 3) do: [:e | e > 1 ifTrue: [^ e]].
 ^ 0
 => 2
 
 "^ に達しなければ、そのまま次の文へ進む
 !macro
-!pending m4
 #(1 2 3) do: [:e | e > 9 ifTrue: [^ e]].
 ^ 0
 => 0
@@ -281,13 +279,11 @@ a := 1 / 0.
 
 "do: は受け手を返す。集めるのは collect:（§6.3）
 !macro
-!pending m4
 ^ #(1 2 3) do: [:e | e]
 => #(1 2 3)
 
 "要素を順に渡す
 !macro
-!pending m4
 | sum |
 sum := 0.
 #(1 2 3) do: [:e | sum := sum + e].
@@ -296,7 +292,6 @@ sum := 0.
 
 "範囲の列挙は Cell を渡す（ADR-0015）
 !macro
-!pending m4
 !A1 := 1
 !A2 := 2
 | sum |
@@ -307,7 +302,6 @@ sum := 0.
 
 "区間も列挙できる（ADR-0016）
 !macro
-!pending m4
 | sum |
 sum := 0.
 (1 to: 4) do: [:e | sum := sum + e].
@@ -316,7 +310,6 @@ sum := 0.
 
 "空を列挙してもブロックは評価されない
 !macro
-!pending m4
 | n |
 n := 0.
 #() do: [:e | n := n + 1].
@@ -325,26 +318,22 @@ n := 0.
 
 "ブロックの値がエラーなら、そのエラーが do: の値になる。collect: と同じ（§6.0）
 !macro
-!pending m4
 ^ #(1 0) do: [:e | 1 / e]
 => #DivideByZero
 
 "引数を取らないブロックは #TypeError（§5.1 の value の規則と同じ）
 !macro
-!pending m4
 ^ #(1 2) do: [1]
 => #TypeError
 
 "セレクタの理解は文脈に依らない。数式から送っても構文エラーにはならない。
 "ただし数式は副作用を持てないので、受け手が返るだけで何も観測できない（§6.4）
-!pending m4
 #(1 2 3) do: [:e | e]
 => #(1 2 3)
 
 "--- 繰り返し: whileTrue: ---
 
 !macro
-!pending m4
 | i |
 i := 0.
 [i < 3] whileTrue: [i := i + 1].
@@ -353,7 +342,6 @@ i := 0.
 
 "最初から偽なら本体は 1 度も評価されない
 !macro
-!pending m4
 | n |
 n := 0.
 [false] whileTrue: [n := n + 1].
@@ -362,7 +350,6 @@ n := 0.
 
 "whileTrue: は nil を返す。値を作るための繰り返しではない
 !macro
-!pending m4
 | i |
 i := 0.
 ^ [i < 1] whileTrue: [i := i + 1]
@@ -370,7 +357,6 @@ i := 0.
 
 "受け手のブロックが真偽値を返さなければ #TypeError
 !macro
-!pending m4
 ^ [1] whileTrue: [2]
 => #TypeError
 
@@ -381,7 +367,6 @@ i := 0.
 
 "引数がブロックでなければ #TypeError（条件式と同じ理由、§5.2）
 !macro
-!pending m4
 | i |
 i := 0.
 ^ [i < 1] whileTrue: 1
@@ -391,7 +376,6 @@ i := 0.
 
 "止まらないマクロは上限で中断する
 !macro
-!pending m4
 | i |
 i := 0.
 [true] whileTrue: [i := i + 1].
@@ -399,7 +383,6 @@ i := 0.
 => #Timeout
 
 "上限は数式にも当たる。代入が書けなくても、停止しない繰り返しは数式で書ける
-!pending m4
 [true] whileTrue: [1]
 => #Timeout
 
