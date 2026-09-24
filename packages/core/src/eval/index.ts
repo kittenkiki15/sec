@@ -1,5 +1,10 @@
 export type { Diagnostic, Evaluation } from './evaluate.ts';
-export { evaluateFormula, evaluateLiteral, NotImplementedError } from './evaluate.ts';
+export {
+  evaluateFormula,
+  evaluateLiteral,
+  evaluateMacro,
+  NotImplementedError,
+} from './evaluate.ts';
 export type {
   ArrayValue,
   BlockValue,

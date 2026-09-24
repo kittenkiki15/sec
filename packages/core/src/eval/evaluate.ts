@@ -8,8 +8,8 @@
  * **セル参照は `Cell` に評価され、理解しないメッセージは保持する値へ委譲される**
  * （§4.2、ADR-0008）。**委譲の規則 1 と規則 2 は `evaluateSend` が持ち、**
  * `Cell` 自身が理解するセレクタは `sendToCell` にある。
- * **範囲（§4.3）まで評価できる。** まだ評価できないのは数式を持つセル（M3 段階 5）と
- * マクロ（M4）で、どちらも例外になる。
+ * **マクロは本体の文の列と一時変数まで評価できる**（§7.2、M4 段階 1）。まだ評価できないのは
+ * マクロのブロックの文の列（段階 2）とセルへの代入（段階 4）で、どちらも例外になる。
  * ゴールデンテストの側はそのケースに `!pending` の印を付けてある（ADR-0019）。
  *
  * **エラーは値として返し、例外にしない**（要件 F-8-1）。例外にすると評価の途中で制御が飛び、
@@ -20,10 +20,12 @@
 import { isResolvable, parseAddress } from '../model/address.ts';
 import { LexicalError } from '../syntax/lexer.ts';
 import {
+  type Body,
   type Expression,
   type LiteralNode,
   ParseError,
   parseFormula,
+  parseMacroBody,
   type SendNode,
 } from '../syntax/parser.ts';
 import { StepBudget } from './budget.ts';
@@ -35,11 +37,14 @@ import {
   type CellValues,
   type Environment,
   heldValue,
+  type NilValue,
   type ReceivedValue,
   type Value,
 } from './value.ts';
 
 const TIMEOUT: Value = { kind: 'error', error: 'Timeout' };
+
+const NIL: NilValue = { kind: 'nil' };
 
 /** 解決できない参照（§4.2）。行 0 のセルと、どこにも束縛されていない識別子。 */
 const REF: Value = { kind: 'error', error: 'Ref' };
@@ -106,9 +111,11 @@ export function evaluateFormula(source: string, cells: CellValues = EMPTY_CELLS)
 }
 
 /** 構文解析の結果。**読めなければ評価結果（`#Syntax`）になる**ので、例外は出さない。 */
-export type ParsedFormula =
-  | { readonly kind: 'parsed'; readonly tree: Expression }
+type Parsed<Tree> =
+  | { readonly kind: 'parsed'; readonly tree: Tree }
   | { readonly kind: 'failed'; readonly evaluation: Evaluation };
+
+export type ParsedFormula = Parsed<Expression>;
 
 /**
  * 数式の原文を木にする。**構文解析と評価を分けて呼べるようにしたもの。**
@@ -120,8 +127,16 @@ export type ParsedFormula =
  * @returns 木、または読めなかったことを表す評価結果
  */
 export function parseFormulaOrFail(source: string): ParsedFormula {
+  return parseOrFail(parseFormula, source);
+}
+
+/**
+ * 開始記号（§7.1）を選んで木にする。**読めなかったときの扱いは開始記号で変えない。**
+ * 数式でもマクロでも、利用者から見れば同じ `#Syntax` である。
+ */
+function parseOrFail<Tree>(parse: (source: string) => Tree, source: string): Parsed<Tree> {
   try {
-    return { kind: 'parsed', tree: parseFormula(source) };
+    return { kind: 'parsed', tree: parse(source) };
   } catch (error) {
     if (error instanceof LexicalError || error instanceof ParseError) {
       return {
@@ -155,19 +170,81 @@ export function evaluateParsedFormula(
   tree: Expression,
   cells: CellValues = EMPTY_CELLS,
 ): Evaluation {
+  // 数式の最上位に束縛は無い。名前を導入できるのはブロックの引数だけである（§5.1）。
+  // **予算は評価ごとに作り直す**ので、使い切った評価が次の評価に影響しない。
+  return { value: withinStack(() => evaluate(tree, EMPTY_ENVIRONMENT, new StepBudget(), cells)) };
+}
+
+/**
+ * マクロ本体の原文を評価する（開始記号 `macro body`、§7.1）。名前を付けずにその場で実行する形。
+ *
+ * **字句エラーと構文エラーは `evaluateFormula` と同じく `#Syntax` の値と診断の組になる。**
+ *
+ * @param source マクロ本体の原文（一時変数の宣言と文の列）
+ * @param cells セルの値を答えるもの（§4.2）。**省けばどのセルも空**として扱う
+ * @returns 値と診断の組。`^` があればその値、無ければ `nil`。エラーも値として返る
+ * @throws {NotImplementedError} まだ評価できないノードに当たった場合
+ */
+export function evaluateMacro(source: string, cells: CellValues = EMPTY_CELLS): Evaluation {
+  const parsed = parseOrFail(parseMacroBody, source);
+  if (parsed.kind === 'failed') return parsed.evaluation;
+  // **予算はマクロ 1 回の実行に 1 つ**（要件 N-5）。文ごとに作り直すと、上限に届かない文を
+  // 並べるだけでいくらでも長く走れてしまう。
+  return { value: withinStack(() => runStatements(parsed.tree, new StepBudget(), cells)) };
+}
+
+/**
+ * 深い入れ子は評価器の再帰も尽きさせうる。超過した評価は `#Timeout`（§7.8）。
+ *
+ * **これは上限そのものではなく安全網である。** ステップ数の上限は `StepBudget` が
+ * 持つが（要件 N-5、CLAUDE.md 規約 4）、**再帰の深さはステップ数では表せない。**
+ * 1 ステップしか使わない式でも入れ子が深ければスタックが尽きるので、両方が要る。
+ * 明示的な再帰深度の上限は M4 の段階 7 で入れる（ADR-0027）。
+ */
+function withinStack(run: () => Value): Value {
   try {
-    // 数式の最上位に束縛は無い。名前を導入できるのはブロックの引数だけである（§5.1）。
-    // **予算は評価ごとに作り直す**ので、使い切った評価が次の評価に影響しない。
-    return { value: evaluate(tree, EMPTY_ENVIRONMENT, new StepBudget(), cells) };
+    return run();
   } catch (error) {
-    // 深い入れ子は評価器の再帰も尽きさせうる。超過した評価は `#Timeout`（§7.8）。
-    //
-    // **これは上限そのものではなく安全網である。** ステップ数の上限は `StepBudget` が
-    // 持つが（要件 N-5、CLAUDE.md 規約 4）、**再帰の深さはステップ数では表せない。**
-    // 1 ステップしか使わない式でも入れ子が深ければスタックが尽きるので、両方が要る。
-    if (error instanceof RangeError) return { value: TIMEOUT };
+    if (error instanceof RangeError) return TIMEOUT;
     throw error;
   }
+}
+
+/**
+ * 一時変数を用意して、文の列を順に評価する（§7.2）。
+ *
+ * **文の値がエラーなら、そこで打ち切ってそのエラーを列の値にする**（ADR-0027 の案 A）。
+ * 値を捨てる文でも、一時変数への代入の右辺でも同じで、**エラーを黙って捨てる経路を作らない。**
+ * §3.6 の「最初に生じたエラーを返す」を文の列に当てたものである。
+ *
+ * **一時変数は書き換えられる束縛**なので、環境をここだけ可変の `Map` で持つ。
+ * 数式の環境（ブロックの引数）は作ったら変わらない。
+ */
+function runStatements(body: Body, budget: StepBudget, cells: CellValues): Value {
+  // 宣言しただけの一時変数は `nil`（§7.2）。
+  const environment = new Map<string, ReceivedValue>(body.temporaries.map((name) => [name, NIL]));
+
+  for (const statement of body.statements) {
+    switch (statement.kind) {
+      // `^` は列の最後にしか書けない（構文解析器が弾く）ので、ここで列が終わる。
+      case 'return':
+        return evaluate(statement.value, environment, budget, cells);
+      case 'assign': {
+        if (statement.target.kind === 'cell') throw new NotImplementedError('セルへの代入');
+        const value = evaluate(statement.value, environment, budget, cells);
+        // 右辺がエラーなら代入しない。エラーを変数に抱えて先へ進めない（ADR-0027）。
+        if (value.kind === 'error') return value;
+        environment.set(statement.target.name, value);
+        break;
+      }
+      default: {
+        const value = evaluate(statement, environment, budget, cells);
+        if (value.kind === 'error') return value;
+      }
+    }
+  }
+  // `^` が無ければ `nil`（§7.2）。マクロは値を返すために書くとは限らない。
+  return NIL;
 }
 
 const EMPTY_ENVIRONMENT: Environment = new Map();

@@ -13,7 +13,7 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { evaluateFormula, printValue } from '../../packages/core/src/eval/index.ts';
+import { evaluateFormula, evaluateMacro, printValue } from '../../packages/core/src/eval/index.ts';
 import { parseAddress, recalculate, Sheet } from '../../packages/core/src/model/index.ts';
 import {
   formatGoldenFailures,
@@ -63,10 +63,17 @@ const buildSheet = (cells) => {
   return sheet;
 };
 
-/** ゴールデンテストの入力を評価器に渡す。マクロはまだ無い。 */
-const evaluate = ({ source, sheet, kind }) => {
-  if (kind === 'macro') throw new Error('未実装: マクロの評価はまだできません。');
-  return printValue(evaluateFormula(source, recalculate(buildSheet(sheet))).value);
+/**
+ * ゴールデンテストの入力を評価器に渡す。
+ *
+ * **マクロは本体だけを評価できる**（M4 段階 1）。宣言部を持つ定義の起動（`!macro from: 1 to: 3`）は
+ * 段階 6 のもので、そのケースには `!pending` が付いている。
+ */
+const evaluate = ({ source, sheet, kind, send }) => {
+  const cells = recalculate(buildSheet(sheet));
+  if (kind === 'formula') return printValue(evaluateFormula(source, cells).value);
+  if (send !== null) throw new Error('未実装: マクロの起動はまだできません。');
+  return printValue(evaluateMacro(source, cells).value);
 };
 
 describe('ゴールデンテストの評価', () => {

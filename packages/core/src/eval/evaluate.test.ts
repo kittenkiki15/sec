@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { evaluateFormula } from './evaluate.ts';
+import { evaluateFormula, evaluateMacro } from './evaluate.ts';
 import { printValue, type Value } from './value.ts';
 
 /** 原文を評価して値だけを取る。診断を見ないケースはこちらを使う。 */
@@ -961,5 +961,56 @@ describe('evaluateFormula の診断（要件 F-8-3）', () => {
     const { value, diagnostic } = evaluateFormula('1 / 0');
     expect(value).toEqual({ kind: 'error', error: 'DivideByZero' });
     expect(diagnostic).toBeUndefined();
+  });
+});
+
+/** マクロ本体を評価し、§0.3 の表記にする。ゴールデンテストの `!macro` と同じ経路。 */
+const ran = (source: string): string => printValue(evaluateMacro(source).value);
+
+// 本体の値・一時変数・構文の拒否はゴールデンテスト（macros.txt / assignment.txt）が固定する。
+// ここに置くのは、**マクロの値だけを書くゴールデンテストでは観測できないもの**である。
+describe('evaluateMacro（§7.2）', () => {
+  it('シートを渡さなければ、どのセルも空として扱う', () => {
+    expect(ran('^ A1')).toBe('nil');
+  });
+
+  // 一時変数は評価ごとに作り直す。前の評価の代入が次の評価から見えない。
+  it('一時変数は 1 回の評価の中にだけある', () => {
+    expect(ran('| a | a := 3. ^ a')).toBe('3');
+    expect(ran('| a | ^ a')).toBe('nil');
+  });
+
+  it('構文エラーは値と診断の組になる。位置は本体の中の行と列', () => {
+    const { value, diagnostic } = evaluateMacro('| a |\na := 1. .');
+    expect(value).toEqual({ kind: 'error', error: 'Syntax' });
+    expect(diagnostic).toMatchObject({ phase: 'parse', line: 2 });
+  });
+
+  it('構文エラーでなければ診断は無い', () => {
+    const { value, diagnostic } = evaluateMacro('^ 1 / 0');
+    expect(value).toEqual({ kind: 'error', error: 'DivideByZero' });
+    expect(diagnostic).toBeUndefined();
+  });
+});
+
+describe('evaluateMacro の実行上限（§7.8）', () => {
+  const nested = (depth: number): string => '#('.repeat(depth) + ')'.repeat(depth);
+
+  it('再帰が尽きる深さでは #Timeout を値として返し、例外を漏らさない', () => {
+    expect(ran(`^ ${nested(100000)}`)).toBe('#Timeout');
+    expect(ran(`1. ^ ${nested(100000)}`)).toBe('#Timeout');
+  });
+
+  // **上限はマクロ 1 回の実行に掛かる**（要件 N-5）。文ごとに数え直すと、
+  // 上限に届かない文を並べるだけでいくらでも長く走れてしまう。
+  it('ステップ数は文をまたいで数える', () => {
+    const half = '(1 to: 600000) sum';
+    expect(ran(`^ ${half}`)).toBe('180000300000');
+    expect(ran(`${half}. ^ ${half}`)).toBe('#Timeout');
+  });
+
+  it('上限は 1 回の評価ごとに数え直す', () => {
+    expect(ran('(1 to: 1e400) sum. ^ 1')).toBe('#Timeout');
+    expect(ran('^ (1 to: 1000) sum')).toBe('500500');
   });
 });
