@@ -1200,6 +1200,24 @@ describe('evaluateMacro のトランザクション（要件 F-3-4、ADR-0027）
     expect(calls).toEqual(['put', 'rollback']);
   });
 
+  // 確定で初めて計算する下流の数式が、評価器の外の失敗で抜けることがある。
+  it('確定が例外で抜けても巻き戻してから投げ直す', () => {
+    const calls: string[] = [];
+    const failing = {
+      begin: () => ({
+        values: () => ({ kind: 'nil' }) as const,
+        put: () => calls.push('put'),
+        commit: () => {
+          calls.push('commit');
+          throw new Error('確定できない');
+        },
+        rollback: () => calls.push('rollback'),
+      }),
+    };
+    expect(() => evaluateMacro('A1 := 1', failing)).toThrow('確定できない');
+    expect(calls).toEqual(['put', 'commit', 'rollback']);
+  });
+
   // 読めないマクロは何も実行しないので、開く必要が無い。
   it('構文エラーのマクロはトランザクションを開かない', () => {
     const sheet = sheetOf(contents);

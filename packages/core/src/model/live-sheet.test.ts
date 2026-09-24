@@ -486,6 +486,58 @@ describe('LiveSheet のトランザクション（要件 F-3-4、ADR-0027 の案
   });
 });
 
+describe('確定の計算が例外で抜けたとき（要件 F-3-4）', () => {
+  const contents = { A1: '1', B1: '=A1 + 1', C1: '=B1 * 2' };
+
+  /** `failing` の間は観測で例外を投げる索引。**計算の途中で抜ける**実装の誤りの代わり。 */
+  function failingWhile(failing: { now: boolean }): LiveSheetOptions {
+    return {
+      invalidation: () => {
+        const index = recordedReads();
+        return {
+          observe(cell, observation) {
+            if (failing.now) throw new Error('観測できない');
+            index.observe(cell, observation);
+          },
+          forget: (cell) => index.forget(cell),
+          readersOf: (address) => index.readersOf(address),
+        };
+      },
+    };
+  }
+
+  // 閉じてから計算すると、抜けた後に巻き戻せず、書き込みが残る。
+  it('トランザクションは閉じずに残り、巻き戻せる', () => {
+    const failing = { now: false };
+    const live = liveSheetOf(contents, failingWhile(failing));
+    const transaction = live.begin();
+    transaction.put(addressOf('A1'), '5');
+
+    failing.now = true;
+    expect(() => transaction.commit()).toThrow('観測できない');
+    failing.now = false;
+    transaction.rollback();
+
+    expect(live.contentAt(addressOf('A1'))).toBe('1');
+    expect(cellValue(live, 'C1')).toBe('4');
+  });
+
+  // 抜けた計算は捨てたセルを忘れない。忘れると、次の確定が計算し直したセルを返し損ねる。
+  it('もう一度 commit すれば、書き込みの下流をすべて返す', () => {
+    const failing = { now: false };
+    const live = liveSheetOf(contents, failingWhile(failing));
+    const transaction = live.begin();
+    transaction.put(addressOf('A1'), '5');
+
+    failing.now = true;
+    expect(() => transaction.commit()).toThrow('観測できない');
+    failing.now = false;
+
+    expect([...transaction.commit()].map(printAddress).sort()).toEqual(['A1', 'B1', 'C1']);
+    expect(cellValue(live, 'C1')).toBe('12');
+  });
+});
+
 describe('トランザクションは 1 度に 1 つ（要件 F-3-4）', () => {
   // **開いている間の書き込みはすべて取り消しの対象でなければならない。** 外から書けると、
   // 巻き戻しがその書き込みを知らずに残すか、知らずに消す。
