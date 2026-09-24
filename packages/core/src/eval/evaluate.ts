@@ -8,9 +8,8 @@
  * **セル参照は `Cell` に評価され、理解しないメッセージは保持する値へ委譲される**
  * （§4.2、ADR-0008）。**委譲の規則 1 と規則 2 は `evaluateSend` が持ち、**
  * `Cell` 自身が理解するセレクタは `sendToCell` にある。
- * **マクロは本体とブロックの文の列と一時変数、ブロックの中の `^` まで評価できる**
- * （§7.2、§7.5、M4 段階 1〜3）。まだ評価できないのはセルへの代入（段階 4）で、例外になる。
- * ゴールデンテストの側はそのケースに `!pending` の印を付けてある（ADR-0019）。
+ * **マクロは本体とブロックの文の列と一時変数、ブロックの中の `^`、セルへの代入まで
+ * 評価できる**（§7.2〜§7.5、M4 段階 1〜4）。書き込みの巻き戻し（段階 5）はまだ無い。
  *
  * **エラーは値として返し、例外にしない**（要件 F-8-1）。例外にすると評価の途中で制御が飛び、
  * §6.0 の伝播順序（受け手 → 引数を左から右 → 送信）を値の受け渡しで表せなくなる。
@@ -18,7 +17,7 @@
  * 非局所リターン（`MacroReturn`）である。
  */
 
-import { isResolvable, parseAddress } from '../model/address.ts';
+import { type CellAddress, isResolvable, parseAddress } from '../model/address.ts';
 import { LexicalError } from '../syntax/lexer.ts';
 import {
   type Body,
@@ -38,11 +37,13 @@ import {
   type CellValue,
   type CellValues,
   type Environment,
+  type ErrorValue,
   heldValue,
   type NilValue,
   type ReceivedValue,
   type Value,
 } from './value.ts';
+import { contentToWrite } from './write.ts';
 
 const TIMEOUT: Value = { kind: 'error', error: 'Timeout' };
 
@@ -56,6 +57,35 @@ const TYPE_ERROR: Value = { kind: 'error', error: 'TypeError' };
 
 /** どのセルも空のシート。**シートを渡されない評価**（`sec eval` の式）が使う。 */
 const EMPTY_CELLS: CellValues = () => ({ kind: 'nil' });
+
+/**
+ * マクロが読み書きするシート（§4.2、§7.4）。`LiveSheet` がこの形を満たす。
+ *
+ * **書き込みと読みを 1 つにまとめて渡す。** 別々に渡すと、書き込んだのに読みの側が
+ * 古いままのシートを組み合わせられてしまう（`LiveSheet` が対にしている理由と同じ）。
+ * `LiveSheet` を直に受け取らないのは、`model` がこのファイルに依存しているためである。
+ */
+export interface MacroSheet {
+  /** 番地からそのセルが保持する値を答える。**書き込みの後に呼べば書き込みを反映する。** */
+  readonly values: CellValues;
+  /** セルに内容を置く。**空の内容はセルを空にする**（ADR-0010）。 */
+  put(address: CellAddress, content: string): unknown;
+}
+
+/**
+ * 読むだけのシート。**数式は書き込めない**（要件 F-2-10）ので、数式の評価はこれを使う。
+ *
+ * 数式に代入が現れないことは `parseFormula` が保証するので、`put` へは来ない。
+ * 来たら実装の誤りなので、黙って捨てずに例外にする。
+ */
+function readOnly(values: CellValues): MacroSheet {
+  return {
+    values,
+    put: () => {
+      throw new Error('数式の評価からセルに書き込もうとしました。');
+    },
+  };
+}
 
 /**
  * ブロックの中の `^`（§7.5）。**マクロ全体を終える**ので、`evaluateMacro` まで制御を飛ばす。
@@ -196,7 +226,8 @@ export function evaluateParsedFormula(
 ): Evaluation {
   // 数式の最上位に束縛は無い。名前を導入できるのはブロックの引数だけである（§5.1）。
   // **予算は評価ごとに作り直す**ので、使い切った評価が次の評価に影響しない。
-  return { value: withinStack(() => evaluate(tree, EMPTY_ENVIRONMENT, new StepBudget(), cells)) };
+  const sheet = readOnly(cells);
+  return { value: withinStack(() => evaluate(tree, EMPTY_ENVIRONMENT, new StepBudget(), sheet)) };
 }
 
 /**
@@ -205,25 +236,25 @@ export function evaluateParsedFormula(
  * **字句エラーと構文エラーは `evaluateFormula` と同じく `#Syntax` の値と診断の組になる。**
  *
  * @param source マクロ本体の原文（一時変数の宣言と文の列）
- * @param cells セルの値を答えるもの（§4.2）。**省けばどのセルも空**として扱う
+ * @param sheet 読み書きするシート（§4.2、§7.4）。**セルへの代入はここへ書き込む**
  * @returns 値と診断の組。`^` があればその値、無ければ `nil`。エラーも値として返る
  * @throws {NotImplementedError} まだ評価できないノードに当たった場合
  */
-export function evaluateMacro(source: string, cells: CellValues = EMPTY_CELLS): Evaluation {
+export function evaluateMacro(source: string, sheet: MacroSheet): Evaluation {
   const parsed = parseOrFail(parseMacroBody, source);
   if (parsed.kind === 'failed') return parsed.evaluation;
   const body = parsed.tree;
   // **予算はマクロ 1 回の実行に 1 つ**（要件 N-5）。文ごとに作り直すと、上限に届かない文を
   // 並べるだけでいくらでも長く走れてしまう。
-  return { value: withinStack(() => runMacroBody(body, new StepBudget(), cells)) };
+  return { value: withinStack(() => runMacroBody(body, new StepBudget(), sheet)) };
 }
 
 /**
  * マクロ本体の文の列を評価し、マクロの値にする。**ブロックの中の `^` はここで受け止める**（§7.5）。
  */
-function runMacroBody(body: Body, budget: StepBudget, cells: CellValues): Value {
+function runMacroBody(body: Body, budget: StepBudget, sheet: MacroSheet): Value {
   try {
-    const value = runStatements(body, declareTemporaries(EMPTY_ENVIRONMENT, body), budget, cells);
+    const value = runStatements(body, declareTemporaries(EMPTY_ENVIRONMENT, body), budget, sheet);
     // `^` が無ければ `nil`（§7.2）。マクロは値を返すために書くとは限らない。
     // `^` は列の最後にしか書けない（構文解析器が弾く）ので、最後の文だけを見ればよい。
     if (value.kind === 'error' || body.statements.at(-1)?.kind === 'return') return value;
@@ -276,19 +307,24 @@ function runStatements(
   body: Body,
   environment: Environment,
   budget: StepBudget,
-  cells: CellValues,
+  sheet: MacroSheet,
 ): Value {
   let last: Value = NIL;
   for (const statement of body.statements) {
     switch (statement.kind) {
       case 'return':
-        last = evaluate(statement.value, environment, budget, cells);
+        last = evaluate(statement.value, environment, budget, sheet);
         break;
       case 'assign': {
-        if (statement.target.kind === 'cell') throw new NotImplementedError('セルへの代入');
-        const value = evaluate(statement.value, environment, budget, cells);
+        const value = evaluate(statement.value, environment, budget, sheet);
         // 右辺がエラーなら代入しない。エラーを変数に抱えて先へ進めない（ADR-0027）。
         if (value.kind === 'error') return value;
+        if (statement.target.kind === 'cell') {
+          const failure = assignCell(statement.target.name, value, sheet);
+          if (failure !== null) return failure;
+          last = NIL;
+          break;
+        }
         const binding = environment.get(statement.target.name);
         // 左辺は宣言済みの一時変数に限る（構文解析器が弾く、§7.3）ので、ここへは来ない。
         // 来たとしても、宣言の無い名前を読んだときと同じ `#Ref` にしておく（§4.2）。
@@ -298,11 +334,28 @@ function runStatements(
         break;
       }
       default:
-        last = evaluate(statement, environment, budget, cells);
+        last = evaluate(statement, environment, budget, sheet);
     }
     if (last.kind === 'error') return last;
   }
   return last;
+}
+
+/**
+ * セルへの代入（§7.4）。**左辺のセルは読まない**——書き込み先を指すだけなので、
+ * 元の値がエラーでも通る。右辺は呼ぶ側が評価済みで、エラーでないことも確かめてある。
+ *
+ * @param name 左辺のセル参照の綴り
+ * @returns 書き込めなければそのエラー。**書き込めなかったセルは書き換わらない**
+ */
+function assignCell(name: string, value: Value, sheet: MacroSheet): ErrorValue | null {
+  const address = parseAddress(name);
+  // 行が 1 始まりでなければ指す先が無い（§4.2、ADR-0020）。読むときと同じ `#Ref`。
+  if (address === null || !isResolvable(address)) return { kind: 'error', error: 'Ref' };
+  const content = contentToWrite(value);
+  if (typeof content !== 'string') return content;
+  sheet.put(address, content);
+  return null;
 }
 
 const EMPTY_ENVIRONMENT: Environment = new Map();
@@ -318,7 +371,7 @@ const EMPTY_ENVIRONMENT: Environment = new Map();
  */
 export function evaluateLiteral(node: LiteralNode): Value {
   // リテラルにセル参照は現れない（§2）ので、どのセルも空のまま評価してよい。
-  return evaluate(node, EMPTY_ENVIRONMENT, new StepBudget(), EMPTY_CELLS);
+  return evaluate(node, EMPTY_ENVIRONMENT, new StepBudget(), readOnly(EMPTY_CELLS));
 }
 
 /**
@@ -326,13 +379,13 @@ export function evaluateLiteral(node: LiteralNode): Value {
  *
  * @param environment その位置で見えている束縛。ブロックの引数（§5.1）とマクロの一時変数（§7.2）
  * @param budget 1 回の評価が使えるステップ数（要件 N-5、§7.8）
- * @param cells セルの値を答えるもの（§4.2）
+ * @param sheet 読み書きするシート（§4.2、§7.4）。数式では書き込めない
  */
 function evaluate(
   node: Expression | LiteralNode,
   environment: Environment,
   budget: StepBudget,
-  cells: CellValues,
+  sheet: MacroSheet,
 ): Value {
   // **1 ノードの評価が 1 ステップ。** 尽きた評価は中断して `#Timeout`（§7.8）。
   if (!budget.spend()) return TIMEOUT;
@@ -354,7 +407,7 @@ function evaluate(
     case 'array': {
       const elements: Value[] = [];
       for (const element of node.elements) {
-        const value = evaluate(element, environment, budget, cells);
+        const value = evaluate(element, environment, budget, sheet);
         // **予算切れは値ではなく打ち切りである**（§7.8）。要素に混ぜると、打ち切られた
         // ことが式の値から読み取れなくなる。**要素の `#Overflow`（`#(1.0e400)`）とは
         // 違う**ので、ここだけは種別を見て分ける。あちらは表せない値であって、
@@ -373,7 +426,7 @@ function evaluate(
     case 'block':
       return { kind: 'block', parameters: node.parameters, body: node, environment };
     case 'send':
-      return evaluateSend(node, environment, budget, cells);
+      return evaluateSend(node, environment, budget, sheet);
     // **セル参照は `Cell` に評価される**（§4.2、ADR-0008）。ここでは値を読まない。
     // 読むのは委譲（規則 2）か `value` の送信で、**範囲は読まないまま作れる**（§4.3）。
     case 'cell': {
@@ -381,7 +434,7 @@ function evaluate(
       // 構文解析器が通した綴りなので番地にはなる。**解決できるかは別の規則**で、
       // 行が 1 始まりでなければ（`A0` / `A000`）指す先が無い（§4.2、ADR-0020）。
       if (address === null || !isResolvable(address)) return REF;
-      return { kind: 'cell', address, values: cells };
+      return { kind: 'cell', address, values: sheet.values };
     }
     // 束縛されている識別子はブロックの引数（§5.1）か一時変数（§7.2）。**それ以外は解決できない**——
     // 数式から参照できる名前が存在しないため（名前付き範囲は MVP の範囲外、§4.2）。
@@ -401,9 +454,9 @@ function evaluateSend(
   node: SendNode,
   environment: Environment,
   budget: StepBudget,
-  cells: CellValues,
+  sheet: MacroSheet,
 ): Value {
-  const receiver = evaluate(node.receiver, environment, budget, cells);
+  const receiver = evaluate(node.receiver, environment, budget, sheet);
   if (receiver.kind === 'error') return receiver;
 
   // **規則 1（§4.2）。** 受け手がセルで、そのセレクタを `Cell` 自身が理解するなら、
@@ -425,7 +478,7 @@ function evaluateSend(
 
   const args: ReceivedValue[] = [];
   for (const argument of node.arguments) {
-    const value = evaluate(argument, environment, budget, cells);
+    const value = evaluate(argument, environment, budget, sheet);
     if (value.kind === 'error') return value;
     args.push(value);
   }
@@ -454,7 +507,7 @@ function evaluateSend(
     resolved,
     node.selector,
     resolvedArgs,
-    (block, blockArgs) => invokeBlock(block, blockArgs, budget, cells),
+    (block, blockArgs) => invokeBlock(block, blockArgs, budget, sheet),
     budget,
   );
 }
@@ -506,18 +559,18 @@ function sendToCell(cell: CellValue, selector: string, args: readonly ReceivedVa
  *
  * @param args 引数に束ねる値。セレクタの綴りが数を決める（`value:value:` なら 2 つ）
  * @param budget 1 回の評価が使えるステップ数（要件 N-5、§7.8）
- * @param cells セルの値を答えるもの（§4.2）。本体の中のセル参照が使う
+ * @param sheet 読み書きするシート（§4.2、§7.4）。本体の中のセル参照と代入が使う
  */
 function invokeBlock(
   block: BlockValue,
   args: readonly ReceivedValue[],
   budget: StepBudget,
-  cells: CellValues,
+  sheet: MacroSheet,
 ): Value {
   const environment = bindParameters(block, args);
   if (environment === null) return { kind: 'error', error: 'TypeError' };
 
-  const value = runStatements(block.body, environment, budget, cells);
+  const value = runStatements(block.body, environment, budget, sheet);
   // **ブロックの中の `^` はマクロ全体を終える**（§7.5）。ブロックの値として返すと
   // 外側の文が続いてしまう。値がエラーなら `^` に達したかどうかを問わずそのまま返す——
   // エラーはどの経路でも打ち切りとして外へ伝わり、マクロはそのエラーで終わる（ADR-0027）。

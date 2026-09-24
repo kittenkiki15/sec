@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { type CellAddress, parseAddress } from '../model/address.ts';
+import { LiveSheet } from '../model/live-sheet.ts';
 import { evaluateFormula, evaluateMacro } from './evaluate.ts';
 import { printValue, type Value } from './value.ts';
 
@@ -964,13 +966,13 @@ describe('evaluateFormula の診断（要件 F-8-3）', () => {
   });
 });
 
-/** マクロ本体を評価し、§0.3 の表記にする。ゴールデンテストの `!macro` と同じ経路。 */
-const ran = (source: string): string => printValue(evaluateMacro(source).value);
+/** マクロ本体を空のシートで評価し、§0.3 の表記にする。ゴールデンテストの `!macro` と同じ経路。 */
+const ran = (source: string): string => printValue(evaluateMacro(source, new LiveSheet()).value);
 
 // 本体の値・一時変数・構文の拒否はゴールデンテスト（macros.txt / assignment.txt）が固定する。
 // ここに置くのは、**マクロの値だけを書くゴールデンテストでは観測できないもの**である。
 describe('evaluateMacro（§7.2）', () => {
-  it('シートを渡さなければ、どのセルも空として扱う', () => {
+  it('空のシートでは、どのセルも空として読める', () => {
     expect(ran('^ A1')).toBe('nil');
   });
 
@@ -981,13 +983,13 @@ describe('evaluateMacro（§7.2）', () => {
   });
 
   it('構文エラーは値と診断の組になる。位置は本体の中の行と列', () => {
-    const { value, diagnostic } = evaluateMacro('| a |\na := 1. .');
+    const { value, diagnostic } = evaluateMacro('| a |\na := 1. .', new LiveSheet());
     expect(value).toEqual({ kind: 'error', error: 'Syntax' });
     expect(diagnostic).toMatchObject({ phase: 'parse', line: 2 });
   });
 
   it('構文エラーでなければ診断は無い', () => {
-    const { value, diagnostic } = evaluateMacro('^ 1 / 0');
+    const { value, diagnostic } = evaluateMacro('^ 1 / 0', new LiveSheet());
     expect(value).toEqual({ kind: 'error', error: 'DivideByZero' });
     expect(diagnostic).toBeUndefined();
   });
@@ -1077,6 +1079,67 @@ describe('evaluateMacro の非局所リターン（§7.5）', () => {
   });
 
   it('抜けるときに例外を呼び出し元へ漏らさない', () => {
-    expect(() => evaluateMacro('#(1) do: [:e | ^ e]. ^ 0')).not.toThrow();
+    expect(() => evaluateMacro('#(1) do: [:e | ^ e]. ^ 0', new LiveSheet())).not.toThrow();
+  });
+});
+
+/** 綴りから番地を作る。テストの原文は正しい綴りなので、読めなければテストの誤り。 */
+const at = (spelling: string): CellAddress => {
+  const address = parseAddress(spelling);
+  if (address === null) throw new Error(`${spelling} はセル参照の形ではありません。`);
+  return address;
+};
+
+/** `A1` に内容を置いたシートでマクロを走らせ、走った後の `A1` の内容を返す。 */
+const contentAfter = (source: string, before = ''): string => {
+  const sheet = new LiveSheet([[at('A1'), before]]);
+  evaluateMacro(source, sheet);
+  return sheet.contentAt(at('A1'));
+};
+
+// **置かれる内容**はマクロの値には出ないので、ゴールデンテストでは観測できない。
+// 数式バー（要件 F-7）と保存（F-5-1）が見るのはこちらである。
+describe('evaluateMacro のセルへの代入（§7.4）', () => {
+  it('値を §0.3 の表記で内容として置く', () => {
+    expect(contentAfter('A1 := 3 + 4')).toBe('7');
+    expect(contentAfter('A1 := 1 / 4')).toBe('0.25');
+    expect(contentAfter('A1 := #foo')).toBe('#foo');
+    expect(contentAfter('A1 := #(1 #(2))')).toBe('#(1 #(2))');
+  });
+
+  // 素のまま置くと、数や数式として読み戻されうる（ADR-0027）。
+  it('文字列は常に引用符付きで置く', () => {
+    expect(contentAfter("A1 := '3'")).toBe("'3'");
+    expect(contentAfter("A1 := '=B1'")).toBe("'=B1'");
+    expect(contentAfter("A1 := #('a')")).toBe("#('a')");
+  });
+
+  it('nil はセルを空にする（ADR-0010）', () => {
+    expect(contentAfter('A1 := nil', '1')).toBe('');
+  });
+
+  it('数式の入っていたセルは値の内容で置き換わる', () => {
+    expect(contentAfter('A1 := 5', '=1 + 1')).toBe('5');
+  });
+
+  it('セルは値の内容で置く。配列の要素のセルも同じ', () => {
+    const sheet = new LiveSheet([[at('B1'), '=2 * 3']]);
+    evaluateMacro('A1 := B1. A2 := (B1 to: B1) collect: [:c | c]', sheet);
+    expect(sheet.contentAt(at('A1'))).toBe('6');
+    expect(sheet.contentAt(at('A2'))).toBe('#(6)');
+  });
+
+  // **エラーを値としてセルに残す経路は作らない**（§7.4）。巻き戻し（段階 5）とは別に、
+  // 失敗した代入そのものが何も書かないこと。
+  it('書き込めない値ならセルは書き換わらない', () => {
+    expect(contentAfter('A1 := 1 / 0', '1')).toBe('1');
+    expect(contentAfter('A1 := #(1 1.0e400)', '1')).toBe('1');
+    expect(contentAfter('A1 := [1]', '1')).toBe('1');
+    expect(contentAfter('A1 := 1 to: 3', '1')).toBe('1');
+    expect(contentAfter('A1 := #(1) collect: [:x | 1 to: x]', '1')).toBe('1');
+  });
+
+  it('代入の後に続く文も書き込みを読む', () => {
+    expect(contentAfter('A1 := 1. A1 := A1 + 1')).toBe('2');
   });
 });
