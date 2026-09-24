@@ -18,7 +18,7 @@
 
 import type { MacroTransaction } from '../eval/evaluate.ts';
 import type { CellValues } from '../eval/value.ts';
-import { type CellAddress, printAddress } from './address.ts';
+import { type CellAddress, isResolvable, printAddress } from './address.ts';
 import { Recalculation, type RecalculationOptions } from './recalc.ts';
 import { Sheet } from './sheet.ts';
 
@@ -129,11 +129,14 @@ export class LiveSheet {
     const originals = new Map<string, readonly [CellAddress, string]>();
 
     const write = (address: CellAddress, content: string): void => {
-      const before = this.#sheet.contentAt(address);
+      // **書き換える前に控える。** 無効化の途中で抜けても、控えがあれば巻き戻せる。
+      // 解決できない番地は控えない。`Sheet.put` が拒むうえ、控えると巻き戻しがそこへ書こうとする。
+      if (isResolvable(address)) {
+        const key = printAddress(address);
+        if (!originals.has(key)) originals.set(key, [address, this.#sheet.contentAt(address)]);
+      }
       this.#sheet.put(address, content);
       this.#recalculation.invalidate(address);
-      const key = printAddress(address);
-      if (!originals.has(key)) originals.set(key, [address, before]);
     };
 
     const ensureOpen = (): void => {

@@ -280,8 +280,7 @@ export function evaluateMacro(source: string, sheet: TransactionalSheet): Evalua
     value = heldValue(withinStack(() => runMacroBody(body, new StepBudget(), transaction)));
   } catch (error) {
     // 評価器の外の失敗（実装の誤り）でも、書きかけのシートを残さない。
-    transaction.rollback();
-    throw error;
+    rollbackAndRethrow(transaction, error);
   }
 
   // **エラーで終わったマクロの書き込みは残らない**（要件 F-3-4、ADR-0027）。
@@ -293,10 +292,27 @@ export function evaluateMacro(source: string, sheet: TransactionalSheet): Evalua
     transaction.commit();
   } catch (error) {
     // 確定で初めて計算する下流の数式が抜けても、書きかけのシートを残さない。
-    transaction.rollback();
-    throw error;
+    rollbackAndRethrow(transaction, error);
   }
   return { value };
+}
+
+/**
+ * 巻き戻してから、元の失敗を投げ直す。
+ *
+ * **巻き戻しも失敗したら、両方を投げる。** 巻き戻しの失敗だけを投げると元の失敗が
+ * 呼び出し元に届かず、元の失敗だけを投げると巻き戻せなかったことが隠れる。
+ */
+function rollbackAndRethrow(transaction: MacroTransaction, error: unknown): never {
+  try {
+    transaction.rollback();
+  } catch (rollbackError) {
+    throw new AggregateError(
+      [error, rollbackError],
+      'マクロの失敗の後、巻き戻しにも失敗しました。',
+    );
+  }
+  throw error;
 }
 
 /**

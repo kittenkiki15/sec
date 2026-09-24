@@ -562,6 +562,19 @@ describe('確定の計算が例外で抜けたとき（要件 F-3-4）', () => {
     expect(put(live, 'A1', '2')).toEqual(['A1', 'B1', 'C1']);
   });
 
+  // 書けない番地を控えると、巻き戻しがそこへ書こうとして抜ける。
+  it('解決できない番地への書き込みは例外で、巻き戻しは他の書き込みを戻す', () => {
+    const live = liveSheetOf(contents);
+    const transaction = live.begin();
+    transaction.put(addressOf('A1'), '5');
+
+    expect(() => transaction.put({ column: 'A', row: 0n }, '1')).toThrow();
+    transaction.rollback();
+
+    expect(live.contentAt(addressOf('A1'))).toBe('1');
+    expect(cellValue(live, 'C1')).toBe('4');
+  });
+
   // 抜けた計算は捨てたセルを忘れない。忘れると、次の確定が計算し直したセルを返し損ねる。
   it('もう一度 commit すれば、書き込みの下流をすべて返す', () => {
     const failing = { now: false };
