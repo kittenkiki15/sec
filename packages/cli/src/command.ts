@@ -72,6 +72,12 @@ const NO_HOST: CommandHost = {
 /** 時間の上限の既定値（ミリ秒、ADR-0034）。 */
 const DEFAULT_TIMEOUT_MS = 5000;
 
+/**
+ * 時間の上限の最大値（ミリ秒）。**Node のタイマーが扱える最大の遅延**（2^31 - 1）。
+ * これを超える遅延を `setTimeout` は 1ms に丸めるので、長く待つ指定がほぼ即座の打ち切りに化ける。
+ */
+const MAX_TIMEOUT_MS = 2_147_483_647;
+
 const USAGE = `使い方: sec <サブコマンド> [引数...]
 
   sec eval <式>       数式を 1 つ評価して結果を表示する
@@ -217,7 +223,9 @@ async function runMacroFile(args: readonly string[], host: CommandHost): Promise
 
   const timeoutMs = parseTimeout(options.get('--timeout'));
   if (timeoutMs === null) {
-    return usageError('--timeout は 1 以上の整数（ミリ秒）で指定してください。');
+    return usageError(
+      `--timeout は 1 以上 ${MAX_TIMEOUT_MS} 以下の整数（ミリ秒）で指定してください。`,
+    );
   }
 
   const source = readFileOrFail(host, macroPath);
@@ -302,12 +310,12 @@ function parseRunArguments(
   return { macroPath, options };
 }
 
-/** `--timeout` の値。**省けば既定値、正の整数でなければ `null`。** */
+/** `--timeout` の値。**省けば既定値、1 以上 `MAX_TIMEOUT_MS` 以下の整数でなければ `null`。** */
 function parseTimeout(text: string | undefined): number | null {
   if (text === undefined) return DEFAULT_TIMEOUT_MS;
   if (!/^[0-9]+$/.test(text)) return null;
   const value = Number(text);
-  return value > 0 && Number.isSafeInteger(value) ? value : null;
+  return value > 0 && value <= MAX_TIMEOUT_MS ? value : null;
 }
 
 function readFileOrFail(host: CommandHost, path: string): string | CommandResult {
