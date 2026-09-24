@@ -291,6 +291,29 @@ export interface MacroMessage {
 }
 
 /**
+ * 起動するメッセージの原文（`from: 1 to: 3`）を読み、引数を評価する。
+ * CLI の `--send` とゴールデンテストの `!macro from: 1 to: 3`（ADR-0018）が使う。
+ *
+ * **受け手を持たない送信は言語に無い**（§7.1）ので、`nil` を受け手に置いて数式として読み、
+ * 最上位の送信を取り出す。引数は起動する側が評価する（`MacroMessage`）。
+ *
+ * @param source 受け手を除いた送信の原文
+ * @param values 引数を評価するシート。**マクロが書き込むシートを渡す**——セルの値は
+ *   読み先を捕まえるので（§4.2）、別のシートで評価するとマクロの書き込みを読めない
+ * @returns メッセージ。1 つの送信として読めなければ `null`（仕様上のエラーではなく使い方の誤り）
+ */
+export function readMacroMessage(source: string, values: CellValues): MacroMessage | null {
+  const parsed = parseFormulaOrFail(`nil ${source}`);
+  if (parsed.kind === 'failed') return null;
+  const { tree } = parsed;
+  if (tree.kind !== 'send' || tree.receiver.kind !== 'nil') return null;
+  return {
+    selector: tree.selector,
+    arguments: tree.arguments.map((argument) => evaluateParsedFormula(argument, values).value),
+  };
+}
+
+/**
  * 宣言部を持つマクロ定義（開始記号 `macro definition`、§7.1）にメッセージを送って起動する。
  *
  * **失敗の順序は §6.0 の送信に揃える。** 定義が読めなければ `#Syntax`（評価より前に決まる）、
