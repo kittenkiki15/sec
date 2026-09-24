@@ -437,6 +437,27 @@ describe('LiveSheet のトランザクション（要件 F-3-4、ADR-0027 の案
     transaction.commit();
   });
 
+  // 矩形の依存から上流を探す経路は 2 つある（中のセルを数え上げる／捨てたセルが中にあるかを見る）。
+  // 矩形が捨てたセルの数より大きいかで分かれるので、両方の側に鎖を置く。`first` は 1 段で
+  // 使うスタックが小さいので、潜って評価したときに尽きる長さまで鎖を伸ばしてある。
+  it.each([
+    ['矩形が小さい', 1000, (row: number) => `=(A${row - 1} to: A${row - 1}) sum + 1`],
+    [
+      '矩形が捨てたセルの数より大きい',
+      5000,
+      (row: number) => `=(A${row - 1} to: XFD${row - 1}) first + 1`,
+    ],
+  ])('範囲で繋がった長い鎖に書き込んでから末端を読んでも評価できる: %s', (_, length, formula) => {
+    const contents: Record<string, string> = { A1: '1' };
+    for (let row = 2; row <= length; row += 1) contents[`A${row}`] = formula(row);
+    const live = liveSheetOf(contents);
+
+    const transaction = live.begin();
+    transaction.put(addressOf('A1'), '2');
+    expect(printValue(transaction.values(addressOf(`A${length}`)))).toBe(String(length + 1));
+    transaction.commit();
+  });
+
   it('読まれたセルの上流でも、読まれたセルに届かない枝は計算しない', () => {
     const log: string[] = [];
     const live = liveSheetOf({ ...contents, D1: '=A1 - 1' }, observing(log));
