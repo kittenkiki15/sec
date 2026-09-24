@@ -64,7 +64,7 @@ const USAGE = `使い方: sec <サブコマンド> [引数...]
  * @param argv `sec` に渡された引数（実行ファイル名は含めない）
  * @returns 出力と終了コード
  */
-export function runCommand(argv: readonly string[]): CommandResult {
+export async function runCommand(argv: readonly string[]): Promise<CommandResult> {
   const [subcommand, ...rest] = argv;
 
   if (subcommand === '--help' || subcommand === '-h') {
