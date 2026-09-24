@@ -1250,6 +1250,32 @@ describe('evaluateMacro のトランザクション（要件 F-3-4、ADR-0027）
     expect(messages).toEqual([original, '戻せない']);
   });
 
+  // エラーの値で終わったときも同じ。元の失敗は値なので、その表記を持つ例外にして含める。
+  it('エラーの値で終わった後に巻き戻しも失敗したら、両方を投げる', () => {
+    const failing = {
+      begin: () => ({
+        values: () => ({ kind: 'nil' }) as const,
+        put: () => undefined,
+        commit: () => undefined,
+        rollback: () => {
+          throw new Error('戻せない');
+        },
+      }),
+    };
+    let thrown: unknown;
+    try {
+      evaluateMacro('A1 := 1. ^ 1 / 0', failing);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(AggregateError);
+    const [original, rollback] = (thrown as AggregateError).errors;
+    expect(original).toBeInstanceOf(Error);
+    expect(original.message).toContain('#DivideByZero');
+    expect(original.cause).toEqual({ kind: 'error', error: 'DivideByZero' });
+    expect(rollback.message).toBe('戻せない');
+  });
+
   // 読めないマクロは何も実行しないので、開く必要が無い。
   it('構文エラーのマクロはトランザクションを開かない', () => {
     const sheet = sheetOf(contents);
