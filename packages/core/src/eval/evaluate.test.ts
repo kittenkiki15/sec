@@ -1019,7 +1019,7 @@ describe('evaluateFormula の繰り返し（§7.6）', () => {
   // do: の値が受け手であることはゴールデンテストが配列で固定している。区間と範囲も同じ。
   it('do: は区間にも範囲にも受け手を返す', () => {
     expect(evaluated('(1 to: 3) do: [:e | e]')).toBe('1 to: 3');
-    expect(evaluated('(A1 to: A2) do: [:c | c]')).toBe('A1:A2');
+    expect(evaluated('(A1 to: A2) do: [:c | c]')).toBe('A1 to: A2');
   });
 
   // collect: と同じく、要素が無ければブロックを評価しないので引数の数も問われない（§6.3）。
