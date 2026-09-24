@@ -13,13 +13,20 @@ import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { evaluateFormula, evaluateMacro, printValue } from '../../packages/core/src/eval/index.ts';
+import {
+  evaluateFormula,
+  evaluateMacro,
+  evaluateMacroDefinition,
+  evaluateParsedFormula,
+  printValue,
+} from '../../packages/core/src/eval/index.ts';
 import {
   LiveSheet,
   parseAddress,
   recalculate,
   Sheet,
 } from '../../packages/core/src/model/index.ts';
+import { parseFormula } from '../../packages/core/src/syntax/parser.ts';
 import {
   formatGoldenFailures,
   parseGoldenFile,
@@ -72,19 +79,37 @@ const buildSheet = (cells) => {
 };
 
 /**
+ * `!macro from: 1 to: 3` の送信を、マクロを起動するメッセージにする（ADR-0018）。
+ *
+ * **受け手を持たない送信は言語に無い**（§7.1）ので、`nil` を受け手に置いて数式として読み、
+ * 最上位の送信のセレクタと引数を取り出す。引数は起動する側が評価する（`MacroMessage`）。
+ * **引数はマクロが書き込むシートで評価する。** セルの値は読み先を捕まえるので（§4.2）、
+ * 別のシートで評価するとマクロの書き込みを読めない。
+ */
+const messageOf = (send, values) => {
+  const tree = parseFormula(`nil ${send}`);
+  if (tree.kind !== 'send' || tree.receiver.kind !== 'nil') {
+    throw new Error(`${send} は 1 つの送信ではありません。`);
+  }
+  return {
+    selector: tree.selector,
+    arguments: tree.arguments.map((argument) => evaluateParsedFormula(argument, values).value),
+  };
+};
+
+/**
  * ゴールデンテストの入力を評価器に渡す。
  *
- * **マクロは本体だけを評価できる**（M4 段階 1）。宣言部を持つ定義の起動（`!macro from: 1 to: 3`）は
- * 段階 6 のもので、そのケースには `!pending` が付いている。
- *
  * **マクロはセルに書き込む**（§7.4）ので、値を保つだけでなく書き込みを下流に伝えるシートを渡す。
+ * 宣言部を持つ定義は、添えたメッセージを送って起動する（§7.1）。
  */
 const evaluate = ({ source, sheet, kind, send }) => {
   if (kind === 'formula') {
     return printValue(evaluateFormula(source, recalculate(buildSheet(sheet))).value);
   }
-  if (send !== null) throw new Error('未実装: マクロの起動はまだできません。');
-  return printValue(evaluateMacro(source, new LiveSheet(addressed(sheet))).value);
+  const live = new LiveSheet(addressed(sheet));
+  if (send === null) return printValue(evaluateMacro(source, live).value);
+  return printValue(evaluateMacroDefinition(source, messageOf(send, live.values), live).value);
 };
 
 describe('ゴールデンテストの評価', () => {
