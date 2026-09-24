@@ -1218,6 +1218,38 @@ describe('evaluateMacro のトランザクション（要件 F-3-4、ADR-0027）
     expect(calls).toEqual(['put', 'commit', 'rollback']);
   });
 
+  // 巻き戻しの失敗で元の失敗を上書きすると、何が起きたかが呼び出し元に届かない。
+  // どちらも黙って捨てない。
+  it.each([
+    ['実行', 'A1 := 1. ^ B1', '読めない'],
+    ['確定', 'A1 := 1', '確定できない'],
+  ])('%sの失敗の後に巻き戻しも失敗したら、両方を投げる', (_, source, original) => {
+    const failing = {
+      begin: () => ({
+        values: (address: CellAddress) => {
+          if (address.column === 'B') throw new Error('読めない');
+          return { kind: 'nil' } as const;
+        },
+        put: () => undefined,
+        commit: () => {
+          throw new Error('確定できない');
+        },
+        rollback: () => {
+          throw new Error('戻せない');
+        },
+      }),
+    };
+    let thrown: unknown;
+    try {
+      evaluateMacro(source, failing);
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(AggregateError);
+    const messages = (thrown as AggregateError).errors.map((error: Error) => error.message);
+    expect(messages).toEqual([original, '戻せない']);
+  });
+
   // 読めないマクロは何も実行しないので、開く必要が無い。
   it('構文エラーのマクロはトランザクションを開かない', () => {
     const sheet = sheetOf(contents);

@@ -489,22 +489,46 @@ describe('LiveSheet のトランザクション（要件 F-3-4、ADR-0027 の案
 describe('確定の計算が例外で抜けたとき（要件 F-3-4）', () => {
   const contents = { A1: '1', B1: '=A1 + 1', C1: '=B1 * 2' };
 
-  /** `failing` の間は観測で例外を投げる索引。**計算の途中で抜ける**実装の誤りの代わり。 */
-  function failingWhile(failing: { now: boolean }): LiveSheetOptions {
+  /**
+   * `failing` の間は例外を投げる索引。**計算や無効化の途中で抜ける**実装の誤りの代わり。
+   * 観測（`observe`）は計算のたびに、忘却（`forget`）は値を捨てるたびに呼ばれる。
+   */
+  function failingWhile(
+    failing: { now: boolean },
+    method: 'observe' | 'forget' = 'observe',
+  ): LiveSheetOptions {
     return {
       invalidation: () => {
         const index = recordedReads();
         return {
           observe(cell, observation) {
-            if (failing.now) throw new Error('観測できない');
+            if (failing.now && method === 'observe') throw new Error('観測できない');
             index.observe(cell, observation);
           },
-          forget: (cell) => index.forget(cell),
+          forget(cell) {
+            if (failing.now && method === 'forget') throw new Error('忘れられない');
+            index.forget(cell);
+          },
           readersOf: (address) => index.readersOf(address),
         };
       },
     };
   }
+
+  // 書き換えてから原文を控えると、その間で抜けたときに控えが無く、書き込みが残る。
+  it('書き込みの無効化が例外で抜けても、そのセルは巻き戻せる', () => {
+    const failing = { now: false };
+    const live = liveSheetOf(contents, failingWhile(failing, 'forget'));
+    const transaction = live.begin();
+
+    failing.now = true;
+    expect(() => transaction.put(addressOf('A1'), '5')).toThrow('忘れられない');
+    failing.now = false;
+    transaction.rollback();
+
+    expect(live.contentAt(addressOf('A1'))).toBe('1');
+    expect(cellValue(live, 'C1')).toBe('4');
+  });
 
   // 閉じてから計算すると、抜けた後に巻き戻せず、書き込みが残る。
   it('トランザクションは閉じずに残り、巻き戻せる', () => {
