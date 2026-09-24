@@ -438,23 +438,24 @@ describe('LiveSheet のトランザクション（要件 F-3-4、ADR-0027 の案
   });
 
   // 矩形の依存から上流を探す経路は 2 つある（中のセルを数え上げる／捨てたセルが中にあるかを見る）。
-  // 矩形が捨てたセルの数より大きいかで分かれるので、両方の側に鎖を置く。`first` は 1 段で
-  // 使うスタックが小さいので、潜って評価したときに尽きる長さまで鎖を伸ばしてある。
+  // 矩形が捨てたセルの数（1000）より大きいかで分かれるので、両方の側に鎖を置く。
+  // 大きい側は前のセルを読む箇所をブロックの入れ子の奥に置き、潜って評価したときに 1000 段で
+  // スタックが尽きるようにしてある。**鎖を伸ばして尽きさせると、矩形を走査する費用が
+  // 鎖の長さの 2 乗で嵩む**（5000 段ではカバレッジ計測下の CI で 5 秒を超えた）。
   it.each([
-    ['矩形が小さい', 1000, (row: number) => `=(A${row - 1} to: A${row - 1}) sum + 1`],
+    ['矩形が小さい', (row: number) => `=(A${row - 1} to: A${row - 1}) sum + 1`],
     [
       '矩形が捨てたセルの数より大きい',
-      5000,
-      (row: number) => `=(A${row - 1} to: XFD${row - 1}) first + 1`,
+      (row: number) => `=[[[[(A${row - 1} to: ALM${row - 1}) first + 1] value] value] value] value`,
     ],
-  ])('範囲で繋がった長い鎖に書き込んでから末端を読んでも評価できる: %s', (_, length, formula) => {
+  ])('範囲で繋がった長い鎖に書き込んでから末端を読んでも評価できる: %s', (_, formula) => {
     const contents: Record<string, string> = { A1: '1' };
-    for (let row = 2; row <= length; row += 1) contents[`A${row}`] = formula(row);
+    for (let row = 2; row <= 1000; row += 1) contents[`A${row}`] = formula(row);
     const live = liveSheetOf(contents);
 
     const transaction = live.begin();
     transaction.put(addressOf('A1'), '2');
-    expect(printValue(transaction.values(addressOf(`A${length}`)))).toBe(String(length + 1));
+    expect(printValue(transaction.values(addressOf('A1000')))).toBe('1001');
     transaction.commit();
   });
 
