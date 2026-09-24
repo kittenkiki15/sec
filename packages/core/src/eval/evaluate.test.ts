@@ -1,7 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { type CellAddress, parseAddress } from '../model/address.ts';
 import { LiveSheet } from '../model/live-sheet.ts';
-import { evaluateFormula, evaluateMacro, evaluateMacroDefinition } from './evaluate.ts';
+import {
+  evaluateFormula,
+  evaluateMacro,
+  evaluateMacroDefinition,
+  readMacroMessage,
+} from './evaluate.ts';
 import { printValue, type Value } from './value.ts';
 
 /** 原文を評価して値だけを取る。診断を見ないケースはこちらを使う。 */
@@ -1444,5 +1449,43 @@ describe('evaluateMacroDefinition（§7.1）', () => {
   it('引数の数がパターンと合わなければ例外にする', () => {
     const message = { selector: 'from:to:', arguments: [integer(1)] };
     expect(() => evaluateMacroDefinition(definition, message, sheetOf({}))).toThrow();
+  });
+});
+
+describe('readMacroMessage（§7.1）', () => {
+  // 起動の構文は言語に無いので、起動する側（CLI・ゴールデンテスト）がこれで読む。
+  it('キーワードの送信をセレクタと評価済みの引数にする', () => {
+    const message = readMacroMessage('from: 1 + 1 to: 3', () => ({ kind: 'nil' }));
+    expect(message?.selector).toBe('from:to:');
+    expect(message?.arguments.map(printValue)).toEqual(['2', '3']);
+  });
+
+  it('単項の送信は引数を持たない', () => {
+    expect(readMacroMessage('run', () => ({ kind: 'nil' }))).toEqual({
+      selector: 'run',
+      arguments: [],
+    });
+  });
+
+  it('引数は渡したシートのセルを読む', () => {
+    const sheet = new LiveSheet([[at('A1'), '4']]);
+    const message = readMacroMessage('upTo: A1 value', sheet.values);
+    expect(message?.arguments.map(printValue)).toEqual(['4']);
+  });
+
+  // 引数のエラーはマクロを起動する側で扱う（ADR-0032）。読む段階では値のまま渡す。
+  it('引数のエラーは値のまま返す', () => {
+    const message = readMacroMessage('upTo: 1 / 0', () => ({ kind: 'nil' }));
+    expect(message?.arguments.map(printValue)).toEqual(['#DivideByZero']);
+  });
+
+  it.each([
+    ['読めない', 'from: 1 to:'],
+    ['空', ''],
+    ['2 つの送信', 'foo bar'],
+    ['カスケード', 'foo; bar'],
+    ['文の列', 'foo. bar'],
+  ])('%s原文は null', (_, source) => {
+    expect(readMacroMessage(source, () => ({ kind: 'nil' }))).toBeNull();
   });
 });

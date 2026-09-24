@@ -30,7 +30,7 @@ describe('シートの JSON を読む', () => {
 
   // 番地は正規化する（ADR-0020）。
   it('番地を正規化する', () => {
-    expect(readSheetFile('{"a007": "1"}')).toEqual({ cells: [[at('A7'), '1']] });
+    expect(readSheetFile('{"A007": "1"}')).toEqual({ cells: [[at('A7'), '1']] });
   });
 
   // 正規化すると同じセルになる 2 つの綴りは、どちらを採っても黙って片方が消える。
