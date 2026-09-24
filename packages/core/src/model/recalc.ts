@@ -18,11 +18,20 @@
  * **増分再計算（F-4-2）は [ADR-0024](../../../../docs/adr/0024-incremental-invalidation.md)。**
  * どのセルを計算し直すかは、**評価中に実際に読んだ番地の記録**から決める（`invalidation.ts`）。
  * 入口は `LiveSheet`（`live-sheet.ts`）で、書き込みと無効化を兼ねる。
+ * **値を捨てる（`invalidate`）と計算する（`settle`）は分けてある**（ADR-0027 の案 C）。
+ * マクロの書き込みは捨てるだけにし、成功か失敗かが決まってから計算する。
  */
 
 import { evaluateParsedFormula, type ParsedFormula, parseFormulaOrFail } from '../eval/evaluate.ts';
 import { type CellValues, type HeldValue, heldValue } from '../eval/value.ts';
-import { type CellAddress, compareColumns, isResolvable, printAddress } from './address.ts';
+import {
+  type CellAddress,
+  columnAt,
+  columnIndex,
+  compareColumns,
+  isResolvable,
+  printAddress,
+} from './address.ts';
 import { readContent } from './content.ts';
 import { type Dependency, type DependencyExtractor, staticDependencies } from './dependencies.ts';
 import {
@@ -83,6 +92,9 @@ export class Recalculation {
   /** 求まった値。**同じセルの値は 1 つである**（決定性、要件 F-4-4）。 */
   readonly #values = new Map<string, HeldValue>();
 
+  /** 値を捨てたまま `settle` を待つセル（ADR-0027 の案 C）。キーは番地の綴り。 */
+  readonly #unsettled = new Map<string, CellAddress>();
+
   /** 値を求めている最中のセル。**読み直したら参照が巡っている**（要件 F-4-3）。 */
   readonly #evaluating = new Set<string>();
 
@@ -108,35 +120,120 @@ export class Recalculation {
   }
 
   /** 番地からそのセルが保持する値を答える（§4.2）。**評価器にそのまま渡せる形。** */
-  readonly values: CellValues = (address) => this.#valueAt(address);
+  readonly values: CellValues = (address) => {
+    // **評価の枠の外からの読みだけが、捨てたままの上流を浅い方から埋める。** 枠の中の読みは
+    // この読みの上流を辿っている最中なので、そこで順序を組み直すと同じ仕事を繰り返す。
+    if (this.#reads.length === 0) this.#settleUpstreamOf(address);
+    return this.#valueAt(address);
+  };
 
   /**
-   * 内容の変わったセルを伝え、下流だけを計算し直す（増分再計算、要件 F-4-2）。
+   * 内容の変わったセルを伝え、**下流の値を捨てる。計算はしない**（ADR-0027 の案 C）。
    *
-   * **シートへの書き込みはこのメソッドの外で済んでいる**（`LiveSheet.put`）。
+   * 捨てたセルは読まれたときにその場で計算され、残りは `settle` がまとめて計算する。
+   * **何度書いても下流を計算し直すのは、読まれた分と最後の 1 回だけ**で済む。
+   * **シートへの書き込みはこのメソッドの外で済んでいる**（`LiveSheet`）。
    *
    * @param changed 内容の変わったセルの番地
-   * @returns 計算し直したセルの番地。**変更されたセル自身を含む**
    */
-  update(changed: CellAddress): readonly CellAddress[] {
+  invalidate(changed: CellAddress): void {
     // **木を作り直すのは変わったセルだけ。** 他のセルの原文は動いていない。
     this.#refreshFormula(changed);
 
     // **捨てる前に集める。** 閉包は今の記録を辿るので、先に忘れると下流を見失う。
-    const dirty = this.#dirtyFrom(changed);
-    for (const [key, cell] of dirty) {
+    // 捨てたままのセルは記録も持たないので辿れないが、値が無いので捨て直す必要も無い。
+    for (const [key, cell] of this.#dirtyFrom(changed)) {
       this.#values.delete(key);
       this.#index.forget(cell);
+      this.#unsettled.set(key, cell);
     }
+  }
 
+  /**
+   * 捨てたままのセルをまとめて計算する（要件 F-4-2）。
+   *
+   * @returns 前の `settle` から後に値を捨てたセルの番地。**途中で読まれて計算済みのものも含む**
+   *   ——グリッドの描き直し（要件 F-7）が要る範囲なので、いつ計算したかを問わない
+   */
+  settle(): readonly CellAddress[] {
     const formulas = new Map<string, FormulaCell>();
-    for (const key of dirty.keys()) {
+    for (const key of this.#unsettled.keys()) {
+      // 読まれて値を持ったセルは、順序を組む相手にならない（下記 `#evaluate`）。
+      if (this.#values.has(key)) continue;
       const formula = this.#formulas.get(key);
       if (formula !== undefined) formulas.set(key, formula);
     }
 
-    this.#evaluate(formulas, [...dirty.values()]);
-    return [...dirty.values()];
+    const settled = [...this.#unsettled.values()];
+    this.#evaluate(formulas, settled);
+    // **計算し終えてから忘れる。** 途中で例外が抜けたら、次の `settle` がまた拾う。
+    this.#unsettled.clear();
+    return settled;
+  }
+
+  /**
+   * 捨てたままのセルを読む前に、**その上流の捨てたままの数式セルを浅い方から計算する。**
+   *
+   * 読まれたセルだけを計算する（ADR-0027 の案 C）と、上流へ潜って評価することになり、
+   * **鎖の長さがそのまま再帰の深さになる。** 構築と `settle` がトポロジカル順序で回すのと
+   * 同じ理由で、ここでも順序を組む。**読まれたセルに届かない枝は計算しない。**
+   *
+   * 上流は静的な依存で辿る。取りこぼした読みがあっても値は安全網が正す（ADR-0023）。
+   */
+  #settleUpstreamOf(address: CellAddress): void {
+    const key = printAddress(address);
+    const start = this.#uncomputedFormula(key);
+    // 計算済みのセルと定数セルは、上流へ潜らない。
+    if (start === undefined) return;
+
+    // **読まれたセルの依存から辿る。** 捨てたままのセルを全部見ると、読まない枝の数だけ
+    // 読むたびに費用がかかり、枝を順に読むマクロでは読む回数との積になる。
+    const upstream = new Map<string, FormulaCell>([[key, start]]);
+    // **先頭から取り出すのに `shift` を使わない。** 並びが長いほど費用が嵩む。
+    const queue = [start];
+    for (let index = 0; index < queue.length; index += 1) {
+      const cell = queue[index];
+      if (cell === undefined) continue;
+      for (const [precedent, formula] of this.#uncomputedPrecedentsOf(cell.dependencies)) {
+        if (upstream.has(precedent)) continue;
+        upstream.set(precedent, formula);
+        queue.push(formula);
+      }
+    }
+
+    for (const cell of topologicalOrder(upstream)) this.#valueAt(cell.address);
+  }
+
+  /** 値を捨てたまま、まだ計算していない数式セル。**値を持つセルは辺を張る相手にならない。** */
+  #uncomputedFormula(key: string): FormulaCell | undefined {
+    if (!this.#unsettled.has(key) || this.#values.has(key)) return undefined;
+    return this.#formulas.get(key);
+  }
+
+  /** 依存のうち、まだ計算していない数式セル（綴りと数式の組）。 */
+  #uncomputedPrecedentsOf(
+    dependencies: readonly Dependency[],
+  ): Iterable<readonly [string, FormulaCell]> {
+    const found = new Map<string, FormulaCell>();
+    const note = (key: string): void => {
+      const formula = this.#uncomputedFormula(key);
+      if (formula !== undefined) found.set(key, formula);
+    };
+
+    for (const dependency of dependencies) {
+      if (dependency.kind === 'cell') {
+        note(printAddress(dependency.address));
+        continue;
+      }
+      // **矩形は小さい方から見る。** 中のセルを数え上げる費用は矩形の大きさで、
+      // 捨てたセルが中にあるかを見る費用は捨てたセルの数である（`A1..A1000000` もありうる）。
+      if (areaOf(dependency) <= BigInt(this.#unsettled.size)) {
+        for (const cell of cellsInside(dependency)) note(printAddress(cell));
+      } else {
+        for (const [key, cell] of this.#unsettled) if (isInside(dependency, cell)) note(key);
+      }
+    }
+    return found;
   }
 
   /**
@@ -357,4 +454,27 @@ function isInside(
     rectangle.topLeft.row <= address.row &&
     address.row <= rectangle.bottomRight.row
   );
+}
+
+/** 矩形の中のセルの数。 */
+function areaOf(rectangle: {
+  readonly topLeft: CellAddress;
+  readonly bottomRight: CellAddress;
+}): bigint {
+  const columns = columnIndex(rectangle.bottomRight.column) - columnIndex(rectangle.topLeft.column);
+  return (columns + 1n) * (rectangle.bottomRight.row - rectangle.topLeft.row + 1n);
+}
+
+/** 矩形の中のセルを数え上げる。**大きさは呼ぶ側が `areaOf` で確かめる。** */
+function* cellsInside(rectangle: {
+  readonly topLeft: CellAddress;
+  readonly bottomRight: CellAddress;
+}): Iterable<CellAddress> {
+  const last = columnIndex(rectangle.bottomRight.column);
+  for (let column = columnIndex(rectangle.topLeft.column); column <= last; column += 1n) {
+    const spelling = columnAt(column);
+    for (let row = rectangle.topLeft.row; row <= rectangle.bottomRight.row; row += 1n) {
+      yield { column: spelling, row };
+    }
+  }
 }

@@ -16,10 +16,45 @@
  * ここが持つのは 1 枚のシートと、その値である。
  */
 
+import type { MacroTransaction } from '../eval/evaluate.ts';
 import type { CellValues } from '../eval/value.ts';
-import type { CellAddress } from './address.ts';
+import { type CellAddress, isResolvable, printAddress } from './address.ts';
 import { Recalculation, type RecalculationOptions } from './recalc.ts';
 import { Sheet } from './sheet.ts';
+
+/**
+ * 1 回のマクロ実行の書き込みをまとめる単位（要件 F-3-4、[ADR-0027](../../../../docs/adr/0027-macro-execution.md) の案 C）。
+ *
+ * **書き込みは下流の値を捨てるだけで、計算は読まれたときと閉じたときにする。**
+ * 閉じるのは `commit` か `rollback` のどちらか 1 回だけで、閉じた後は書けない。
+ */
+export interface SheetTransaction extends MacroTransaction {
+  /**
+   * セルに内容を置き、下流の値を捨てる。**読めば書き込みを反映した値になる。**
+   *
+   * @throws {Error} 閉じた後に呼んだ場合、解決できない番地（行が 0）を渡した場合
+   */
+  put(address: CellAddress, content: string): void;
+
+  /**
+   * 書き込みを確定し、捨てたままのセルをまとめて計算する。
+   *
+   * **計算してから閉じる。** 計算が例外で抜けたら開いたままなので、`rollback` できる。
+   *
+   * @returns 計算し直したセルの番地。**書き込んだセルと、途中で読まれたセルも含む**
+   * @throws {Error} 閉じた後に呼んだ場合
+   */
+  commit(): readonly CellAddress[];
+
+  /**
+   * 書き込んだセルに開始前の原文を書き戻す。**値も開始前と同じになる**（要件 F-4-4）。
+   *
+   * **原文を戻したら閉じる。** 後の計算が例外で抜けても閉じており、値は読まれたときに戻る。
+   *
+   * @throws {Error} 閉じた後に呼んだ場合
+   */
+  rollback(): void;
+}
 
 /** 差し替えられる部分（[ADR-0023](../../../../docs/adr/0023-dependency-extraction.md)、[ADR-0024](../../../../docs/adr/0024-incremental-invalidation.md)）。 */
 export type LiveSheetOptions = RecalculationOptions;
@@ -27,6 +62,12 @@ export type LiveSheetOptions = RecalculationOptions;
 export class LiveSheet {
   readonly #sheet = new Sheet();
   readonly #recalculation: Recalculation;
+
+  /**
+   * 開いているトランザクション。**1 度に 1 つ**で、開いている間は `put` で書けない。
+   * 外から書けると、巻き戻しがその書き込みを知らずに消すか、知らずに残す。
+   */
+  #transaction: SheetTransaction | null = null;
 
   /**
    * @param contents 初めに置く内容。**まとめて置いてから 1 度だけ再計算する**
@@ -66,7 +107,71 @@ export class LiveSheet {
    * @throws {Error} 解決できない番地（行が 0）を渡した場合
    */
   put(address: CellAddress, content: string): readonly CellAddress[] {
+    if (this.#transaction !== null) {
+      throw new Error('トランザクションが開いている間は put で書き込めません。');
+    }
     this.#sheet.put(address, content);
-    return this.#recalculation.update(address);
+    this.#recalculation.invalidate(address);
+    return this.#recalculation.settle();
+  }
+
+  /**
+   * トランザクションを開く（要件 F-3-4）。マクロの 1 回の実行がこの単位で書き込む。
+   *
+   * @throws {Error} 別のトランザクションが開いている場合
+   */
+  begin(): SheetTransaction {
+    if (this.#transaction !== null) {
+      throw new Error('トランザクションは 1 度に 1 つしか開けません。');
+    }
+
+    /** 書き込んだセルの開始前の原文。**そのセルへの最初の書き込みだけ**を控える。 */
+    const originals = new Map<string, readonly [CellAddress, string]>();
+
+    const write = (address: CellAddress, content: string): void => {
+      // **書き換える前に控える。** 無効化の途中で抜けても、控えがあれば巻き戻せる。
+      // 解決できない番地は控えない。`Sheet.put` が拒むうえ、控えると巻き戻しがそこへ書こうとする。
+      if (isResolvable(address)) {
+        const key = printAddress(address);
+        if (!originals.has(key)) originals.set(key, [address, this.#sheet.contentAt(address)]);
+      }
+      this.#sheet.put(address, content);
+      this.#recalculation.invalidate(address);
+    };
+
+    const ensureOpen = (): void => {
+      if (this.#transaction !== transaction) {
+        throw new Error('閉じたトランザクションは使えません。');
+      }
+    };
+
+    const transaction: SheetTransaction = {
+      values: this.values,
+      put: (address, content) => {
+        ensureOpen();
+        write(address, content);
+      },
+      commit: () => {
+        ensureOpen();
+        // **計算してから閉じる。** 計算が例外で抜けたときに開いたままなら、まだ巻き戻せる。
+        const settled = this.#recalculation.settle();
+        this.#transaction = null;
+        return settled;
+      },
+      rollback: () => {
+        ensureOpen();
+        // **控えたのは原文**なので、書き込み先にあった数式もそのまま戻る（ADR-0027）。
+        for (const [address, content] of originals.values()) {
+          this.#sheet.put(address, content);
+          this.#recalculation.invalidate(address);
+        }
+        // **原文を戻したら閉じる。** 後の計算が例外で抜けても、捨てたセルは読まれたときに
+        // 計算されるので値は開始前に戻る。開いたままにすると、シートに二度と書けなくなる。
+        this.#transaction = null;
+        this.#recalculation.settle();
+      },
+    };
+    this.#transaction = transaction;
+    return transaction;
   }
 }

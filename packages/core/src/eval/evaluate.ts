@@ -9,7 +9,7 @@
  * （§4.2、ADR-0008）。**委譲の規則 1 と規則 2 は `evaluateSend` が持ち、**
  * `Cell` 自身が理解するセレクタは `sendToCell` にある。
  * **マクロは本体とブロックの文の列と一時変数、ブロックの中の `^`、セルへの代入まで
- * 評価できる**（§7.2〜§7.5、M4 段階 1〜4）。書き込みの巻き戻し（段階 5）はまだ無い。
+ * 評価でき、1 回の実行が 1 つのトランザクションになる**（§7.2〜§7.5・§7.8、M4 段階 1〜5）。
  *
  * **エラーは値として返し、例外にしない**（要件 F-8-1）。例外にすると評価の途中で制御が飛び、
  * §6.0 の伝播順序（受け手 → 引数を左から右 → 送信）を値の受け渡しで表せなくなる。
@@ -40,6 +40,7 @@ import {
   type ErrorValue,
   heldValue,
   type NilValue,
+  printValue,
   type ReceivedValue,
   type Value,
 } from './value.ts';
@@ -70,6 +71,26 @@ export interface MacroSheet {
   readonly values: CellValues;
   /** セルに内容を置く。**空の内容はセルを空にする**（ADR-0010）。 */
   put(address: CellAddress, content: string): unknown;
+}
+
+/**
+ * 1 回のマクロ実行の書き込みをまとめる単位（要件 F-3-4、ADR-0027）。
+ *
+ * **閉じるのは `commit` か `rollback` のどちらか 1 回だけ**で、どちらにするかは
+ * `evaluateMacro` が決める。読みと書きは `MacroSheet` と同じで、書き込みは閉じるまで
+ * 確定しない。
+ */
+export interface MacroTransaction extends MacroSheet {
+  /** 書き込みを確定する。 */
+  commit(): unknown;
+  /** 書き込んだセルを開始前の内容に戻す。**値も開始前と同じになる。** */
+  rollback(): unknown;
+}
+
+/** マクロを実行できるシート。`LiveSheet` がこの形を満たす。 */
+export interface TransactionalSheet {
+  /** トランザクションを開く。**マクロ 1 回の実行に 1 つ。** */
+  begin(): MacroTransaction;
 }
 
 /**
@@ -236,17 +257,68 @@ export function evaluateParsedFormula(
  * **字句エラーと構文エラーは `evaluateFormula` と同じく `#Syntax` の値と診断の組になる。**
  *
  * @param source マクロ本体の原文（一時変数の宣言と文の列）
+ * **1 回の実行が 1 つのトランザクションである**（要件 F-3-4）。値がエラーなら書き込みを
+ * 巻き戻し、そうでなければ確定する。
+ *
  * @param sheet 読み書きするシート（§4.2、§7.4）。**セルへの代入はここへ書き込む**
- * @returns 値と診断の組。`^` があればその値、無ければ `nil`。エラーも値として返る
+ * @returns 値と診断の組。`^` があればその値、無ければ `nil`。エラーも値として返る。
+ *   **セルは返さない**——終了時点のそのセルの値を返す（ADR-0031）
  * @throws {NotImplementedError} まだ評価できないノードに当たった場合
  */
-export function evaluateMacro(source: string, sheet: MacroSheet): Evaluation {
+export function evaluateMacro(source: string, sheet: TransactionalSheet): Evaluation {
   const parsed = parseOrFail(parseMacroBody, source);
+  // 読めなかったマクロは何も実行しないので、トランザクションを開かない。
   if (parsed.kind === 'failed') return parsed.evaluation;
   const body = parsed.tree;
-  // **予算はマクロ 1 回の実行に 1 つ**（要件 N-5）。文ごとに作り直すと、上限に届かない文を
-  // 並べるだけでいくらでも長く走れてしまう。
-  return { value: withinStack(() => runMacroBody(body, new StepBudget(), sheet)) };
+
+  const transaction = sheet.begin();
+  let value: Value;
+  try {
+    // **予算はマクロ 1 回の実行に 1 つ**（要件 N-5）。文ごとに作り直すと、上限に届かない文を
+    // 並べるだけでいくらでも長く走れてしまう。
+    // **セルは閉じる前に値まで解決する**（ADR-0031）。巻き戻した後に読めば開始前の値になり、
+    // マクロが終わった時点の値ではなくなる。解決した値がエラーなら失敗として巻き戻す。
+    value = heldValue(withinStack(() => runMacroBody(body, new StepBudget(), transaction)));
+  } catch (error) {
+    // 評価器の外の失敗（実装の誤り）でも、書きかけのシートを残さない。
+    rollbackAndRethrow(transaction, error);
+  }
+
+  // **エラーで終わったマクロの書き込みは残らない**（要件 F-3-4、ADR-0027）。
+  if (value.kind === 'error') {
+    try {
+      transaction.rollback();
+    } catch (rollbackError) {
+      // 元の失敗は値なので、その表記を持つ例外にして同じく両方を投げる（`rollbackAndRethrow`）。
+      const failure = new Error(`マクロが ${printValue(value)} で終わりました。`, { cause: value });
+      throw new AggregateError([failure, rollbackError], ROLLBACK_FAILED);
+    }
+    return { value };
+  }
+  try {
+    transaction.commit();
+  } catch (error) {
+    // 確定で初めて計算する下流の数式が抜けても、書きかけのシートを残さない。
+    rollbackAndRethrow(transaction, error);
+  }
+  return { value };
+}
+
+const ROLLBACK_FAILED = 'マクロの失敗の後、巻き戻しにも失敗しました。';
+
+/**
+ * 巻き戻してから、元の失敗を投げ直す。
+ *
+ * **巻き戻しも失敗したら、両方を投げる。** 巻き戻しの失敗だけを投げると元の失敗が
+ * 呼び出し元に届かず、元の失敗だけを投げると巻き戻せなかったことが隠れる。
+ */
+function rollbackAndRethrow(transaction: MacroTransaction, error: unknown): never {
+  try {
+    transaction.rollback();
+  } catch (rollbackError) {
+    throw new AggregateError([error, rollbackError], ROLLBACK_FAILED);
+  }
+  throw error;
 }
 
 /**
