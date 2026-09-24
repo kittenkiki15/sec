@@ -539,9 +539,9 @@ describe('evaluateFormula の実行上限', () => {
   /** `#(` を重ねた入力。入れ子の深さがそのまま再帰の深さになる。 */
   const nested = (depth: number): string => '#('.repeat(depth) + ')'.repeat(depth);
 
-  // 深い入れ子は、構文解析器と評価器のどちらの再帰も尽きさせうる。どちらで尽きても
-  // 仕様外の例外（RangeError）を漏らさず、#Timeout の値にする（§7.8）。
-  // **どの深さで尽きるかはスタックの大きさ次第なので、境界そのものは固定しない。**
+  // 深い入れ子は構文解析器の再帰を尽きさせうる。仕様外の例外（RangeError）を漏らさず、
+  // #Timeout の値にする（§7.8）。**構文解析器は明示的な上限を持たないので、どの深さで
+  // 尽きるかはスタック次第で、境界は固定しない。** 評価器の境界は 256（ADR-0033）。
   it('再帰が尽きる深さでは #Timeout を値として返す', () => {
     expect(evaluatedValue(nested(100000))).toEqual({ kind: 'error', error: 'Timeout' });
   });
