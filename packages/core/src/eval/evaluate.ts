@@ -8,13 +8,14 @@
  * **セル参照は `Cell` に評価され、理解しないメッセージは保持する値へ委譲される**
  * （§4.2、ADR-0008）。**委譲の規則 1 と規則 2 は `evaluateSend` が持ち、**
  * `Cell` 自身が理解するセレクタは `sendToCell` にある。
- * **マクロは本体とブロックの文の列と一時変数まで評価できる**（§7.2、§7.5、M4 段階 1・2）。
- * まだ評価できないのはブロックの中の `^`（段階 3）とセルへの代入（段階 4）で、どちらも例外になる。
+ * **マクロは本体とブロックの文の列と一時変数、ブロックの中の `^` まで評価できる**
+ * （§7.2、§7.5、M4 段階 1〜3）。まだ評価できないのはセルへの代入（段階 4）で、例外になる。
  * ゴールデンテストの側はそのケースに `!pending` の印を付けてある（ADR-0019）。
  *
  * **エラーは値として返し、例外にしない**（要件 F-8-1）。例外にすると評価の途中で制御が飛び、
  * §6.0 の伝播順序（受け手 → 引数を左から右 → 送信）を値の受け渡しで表せなくなる。
- * **例外を使うのは「まだ実装が無い」ことを言うときだけ**で、これは仕様上の状態ではない。
+ * **例外を使うのは 2 つだけ。** 「まだ実装が無い」ことを言うとき（仕様上の状態ではない）と、
+ * 非局所リターン（`MacroReturn`）である。
  */
 
 import { isResolvable, parseAddress } from '../model/address.ts';
@@ -55,6 +56,28 @@ const TYPE_ERROR: Value = { kind: 'error', error: 'TypeError' };
 
 /** どのセルも空のシート。**シートを渡されない評価**（`sec eval` の式）が使う。 */
 const EMPTY_CELLS: CellValues = () => ({ kind: 'nil' });
+
+/**
+ * ブロックの中の `^`（§7.5）。**マクロ全体を終える**ので、`evaluateMacro` まで制御を飛ばす。
+ *
+ * **値の受け渡しでは表せないので例外にした。** エラーと同じく打ち切りの印を値に載せる形も
+ * あるが、ブロックを評価する経路（条件式・列挙・整列の比較・`whileTrue:`）の
+ * すべてがその印を見分けて素通しする必要があり、**1 つ見落とすと `^` の値が
+ * ただの値として外側の文に続いてしまう。** 例外なら経路の側は何も知らずに済む。
+ *
+ * **捕まえるのは `evaluateMacro` だけである。** マクロの外へ出たブロックを後から
+ * 起動する経路は無い（ブロックはセルに書き込めない、ADR-0027）ので、戻り先は常に
+ * いま走っているマクロである。数式のブロックには `^` を書けない（§7.7）。
+ * `Error` を継承しないのは、誤りではなく制御の移動であり、スタックの記録も要らないため。
+ */
+class MacroReturn {
+  // 引数プロパティの略記は使えない。`node` の型の除去が消せる構文ではないため（CLAUDE.md）。
+  readonly value: Value;
+
+  constructor(value: Value) {
+    this.value = value;
+  }
+}
 
 /** まだ評価できないノードに当たったことを表す。**仕様上のエラーではない。** */
 export class NotImplementedError extends Error {
@@ -192,13 +215,23 @@ export function evaluateMacro(source: string, cells: CellValues = EMPTY_CELLS): 
   const body = parsed.tree;
   // **予算はマクロ 1 回の実行に 1 つ**（要件 N-5）。文ごとに作り直すと、上限に届かない文を
   // 並べるだけでいくらでも長く走れてしまう。
-  const value = withinStack(() =>
-    runStatements(body, declareTemporaries(EMPTY_ENVIRONMENT, body), new StepBudget(), cells),
-  );
-  // `^` が無ければ `nil`（§7.2）。マクロは値を返すために書くとは限らない。
-  // `^` は列の最後にしか書けない（構文解析器が弾く）ので、最後の文だけを見ればよい。
-  if (value.kind === 'error' || body.statements.at(-1)?.kind === 'return') return { value };
-  return { value: NIL };
+  return { value: withinStack(() => runMacroBody(body, new StepBudget(), cells)) };
+}
+
+/**
+ * マクロ本体の文の列を評価し、マクロの値にする。**ブロックの中の `^` はここで受け止める**（§7.5）。
+ */
+function runMacroBody(body: Body, budget: StepBudget, cells: CellValues): Value {
+  try {
+    const value = runStatements(body, declareTemporaries(EMPTY_ENVIRONMENT, body), budget, cells);
+    // `^` が無ければ `nil`（§7.2）。マクロは値を返すために書くとは限らない。
+    // `^` は列の最後にしか書けない（構文解析器が弾く）ので、最後の文だけを見ればよい。
+    if (value.kind === 'error' || body.statements.at(-1)?.kind === 'return') return value;
+    return NIL;
+  } catch (signal) {
+    if (signal instanceof MacroReturn) return signal.value;
+    throw signal;
+  }
 }
 
 /**
@@ -484,13 +517,14 @@ function invokeBlock(
   const environment = bindParameters(block, args);
   if (environment === null) return { kind: 'error', error: 'TypeError' };
 
-  // ブロックの中の `^` はマクロ全体を終える（§7.5）。ブロックの値として返すと
-  // 外側の文が続いてしまうので、実装するまでは黙って別の値を返さない（段階 3）。
-  if (block.body.statements.at(-1)?.kind === 'return') {
-    throw new NotImplementedError('ブロックの中の ^');
+  const value = runStatements(block.body, environment, budget, cells);
+  // **ブロックの中の `^` はマクロ全体を終える**（§7.5）。ブロックの値として返すと
+  // 外側の文が続いてしまう。値がエラーなら `^` に達したかどうかを問わずそのまま返す——
+  // エラーはどの経路でも打ち切りとして外へ伝わり、マクロはそのエラーで終わる（ADR-0027）。
+  if (value.kind !== 'error' && block.body.statements.at(-1)?.kind === 'return') {
+    throw new MacroReturn(value);
   }
-
-  return runStatements(block.body, environment, budget, cells);
+  return value;
 }
 
 /**

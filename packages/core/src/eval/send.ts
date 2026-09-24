@@ -14,7 +14,8 @@
  * そちらは `evaluate.ts` が引き受ける。
  *
  * **セレクタは段階ごとに足す。** 現時点で持たせてあるのは §6.1 の `Number` 全体、
- * §6.2 の `String` / `Boolean` / `Symbol` / `nil` 全体と、`Block` の `value` である。
+ * §6.2 の `String` / `Boolean` / `Symbol` / `nil` 全体、§6.3 の並び全体、
+ * `Block` の `value`（§5.1）と、§7.6 の繰り返し（`do:` / `whileTrue:`）である。
  * **`Cell` 自身が理解するセレクタは `evaluate.ts` が持つ**（§4.2 の委譲の分かれ目そのもので、
  * ここに置くと規則 1 と規則 2 の判定が 2 箇所に散る）。
  * **持たせていないセレクタは `#DoesNotUnderstand` になる。** これは仕様上ありうる値なので、
@@ -45,6 +46,7 @@ import {
   collectWith,
   countOf,
   detectWith,
+  doWith,
   filterWith,
   firstOf,
   injectWith,
@@ -88,6 +90,7 @@ export type InvokeBlock = (block: BlockValue, args: readonly ReceivedValue[]) =>
 
 const TYPE_ERROR: ErrorValue = { kind: 'error', error: 'TypeError' };
 const DOES_NOT_UNDERSTAND: ErrorValue = { kind: 'error', error: 'DoesNotUnderstand' };
+const TIMEOUT: ErrorValue = { kind: 'error', error: 'Timeout' };
 
 const NIL: Value = { kind: 'nil' };
 
@@ -363,11 +366,46 @@ function sendToBlock(
   selector: string,
   args: readonly ReceivedValue[],
   invoke: InvokeBlock,
+  budget: StepBudget,
 ): Value | undefined {
+  const [first] = args;
+  // 引数の型は受け手のブロックを評価する前に問う（§5.2 の条件式と同じ理由、§7.6）。
+  if (selector === 'whileTrue:' && first !== undefined) {
+    return withBlock(first, (body) => repeatWhileTrue(receiver, body, invoke, budget));
+  }
   if (selector !== 'value' && selector !== 'value:' && selector !== 'value:value:') {
     return undefined;
   }
   return invoke(receiver, args);
+}
+
+/**
+ * `whileTrue:`（§7.6）。**受け手を評価して `true` の間、本体を評価し、`nil` を返す。**
+ * 値を作るための繰り返しではない。
+ *
+ * **受け手の値は真偽値でなければ `#TypeError`**（§6.3 の列挙の条件と同じ規則）。`Cell` も
+ * 真偽値ではないので、セルを条件にするには `isTrue` を送る（ADR-0022）。
+ *
+ * **1 回まわるごとにステップを払う**（要件 N-5、CLAUDE.md 規約 4）。受け手と本体の評価も
+ * ステップを使うが、それはブロックの中身次第である。ループそのものに上限を掛けておけば、
+ * 中身が何であっても止まることをここだけで言える。
+ */
+function repeatWhileTrue(
+  test: BlockValue,
+  body: BlockValue,
+  invoke: InvokeBlock,
+  budget: StepBudget,
+): Value {
+  while (budget.spend()) {
+    const continues = invoke(test, []);
+    if (continues.kind === 'error') return continues;
+    if (continues.kind !== 'boolean') return TYPE_ERROR;
+    if (!continues.value) return NIL;
+
+    const result = invoke(body, []);
+    if (result.kind === 'error') return result;
+  }
+  return TIMEOUT;
 }
 
 /**
@@ -418,6 +456,8 @@ function sendToSequence(
         return withInteger(first, (index) => at(receiver, index));
       case 'collect:':
         return withBlock(first, (block) => collectWith(receiver, block, invoke, budget));
+      case 'do:':
+        return withBlock(first, (block) => doWith(receiver, block, invoke, budget));
       case 'select:':
         return withBlock(first, (block) => filterWith(receiver, block, invoke, true, budget));
       case 'reject:':
@@ -523,7 +563,7 @@ function dispatch(
     case 'boolean':
       return sendToBoolean(receiver, selector, args, invoke);
     case 'block':
-      return sendToBlock(receiver, selector, args, invoke);
+      return sendToBlock(receiver, selector, args, invoke, budget);
     // シンボルと nil が単独で持つセレクタは無い（§6.2）。理解するのは `sendToAny` の分だけで、
     // **シンボルは識別子であって文字の並びではない**ので `size` も `asUppercase` も持たない。
     case 'symbol':

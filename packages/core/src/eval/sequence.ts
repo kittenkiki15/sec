@@ -330,6 +330,27 @@ export function collectWith(
 }
 
 /**
+ * `do:`。**受け手を返す**（§7.6）。値を集めるのは `collect:` の役割で、`do:` はブロックの
+ * 副作用（一時変数やセルへの代入）のために回す。ブロックの値がエラーなら、そのエラーが
+ * `do:` の値になる（`collect:` と同じ、§6.0）。
+ */
+export function doWith(
+  receiver: SequenceValue,
+  block: BlockValue,
+  invoke: InvokeBlock,
+  budget: StepBudget,
+): Value {
+  const elements = elementList(receiver, budget);
+  if (isFailure(elements)) return elements;
+
+  for (const element of elements) {
+    const result = invoke(block, [element]);
+    if (result.kind === 'error') return result;
+  }
+  return receiver;
+}
+
+/**
  * `select:` と `reject:`。
  *
  * @param keep ブロックが返した真偽値のうち要素を残す方（`select:` は `true`、`reject:` は `false`）
