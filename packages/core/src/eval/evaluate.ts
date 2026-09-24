@@ -40,6 +40,7 @@ import {
   type ErrorValue,
   heldValue,
   type NilValue,
+  printValue,
   type ReceivedValue,
   type Value,
 } from './value.ts';
@@ -285,7 +286,13 @@ export function evaluateMacro(source: string, sheet: TransactionalSheet): Evalua
 
   // **エラーで終わったマクロの書き込みは残らない**（要件 F-3-4、ADR-0027）。
   if (value.kind === 'error') {
-    transaction.rollback();
+    try {
+      transaction.rollback();
+    } catch (rollbackError) {
+      // 元の失敗は値なので、その表記を持つ例外にして同じく両方を投げる（`rollbackAndRethrow`）。
+      const failure = new Error(`マクロが ${printValue(value)} で終わりました。`, { cause: value });
+      throw new AggregateError([failure, rollbackError], ROLLBACK_FAILED);
+    }
     return { value };
   }
   try {
@@ -297,6 +304,8 @@ export function evaluateMacro(source: string, sheet: TransactionalSheet): Evalua
   return { value };
 }
 
+const ROLLBACK_FAILED = 'マクロの失敗の後、巻き戻しにも失敗しました。';
+
 /**
  * 巻き戻してから、元の失敗を投げ直す。
  *
@@ -307,10 +316,7 @@ function rollbackAndRethrow(transaction: MacroTransaction, error: unknown): neve
   try {
     transaction.rollback();
   } catch (rollbackError) {
-    throw new AggregateError(
-      [error, rollbackError],
-      'マクロの失敗の後、巻き戻しにも失敗しました。',
-    );
+    throw new AggregateError([error, rollbackError], ROLLBACK_FAILED);
   }
   throw error;
 }
