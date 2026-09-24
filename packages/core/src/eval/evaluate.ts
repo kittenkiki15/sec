@@ -9,7 +9,8 @@
  * （§4.2、ADR-0008）。**委譲の規則 1 と規則 2 は `evaluateSend` が持ち、**
  * `Cell` 自身が理解するセレクタは `sendToCell` にある。
  * **マクロは本体とブロックの文の列と一時変数、ブロックの中の `^`、セルへの代入まで
- * 評価でき、1 回の実行が 1 つのトランザクションになる**（§7.2〜§7.5・§7.8、M4 段階 1〜5）。
+ * 評価でき、1 回の実行が 1 つのトランザクションになる。宣言部を持つ定義はメッセージを送って
+ * 起動できる**（§7.1〜§7.5・§7.8、M4 段階 1〜6）。
  *
  * **エラーは値として返し、例外にしない**（要件 F-8-1）。例外にすると評価の途中で制御が飛び、
  * §6.0 の伝播順序（受け手 → 引数を左から右 → 送信）を値の受け渡しで表せなくなる。
@@ -26,6 +27,7 @@ import {
   ParseError,
   parseFormula,
   parseMacroBody,
+  parseMacroDefinition,
   type SendNode,
 } from '../syntax/parser.ts';
 import { StepBudget } from './budget.ts';
@@ -55,6 +57,9 @@ const REF: Value = { kind: 'error', error: 'Ref' };
 
 /** 引数の型が合わない（§6.0 の検査の順序 2）。範囲の端がセルでないときに返る。 */
 const TYPE_ERROR: Value = { kind: 'error', error: 'TypeError' };
+
+/** 起動するメッセージのセレクタがマクロのパターンと違う（§7.1）。 */
+const DOES_NOT_UNDERSTAND: Value = { kind: 'error', error: 'DoesNotUnderstand' };
 
 /** どのセルも空のシート。**シートを渡されない評価**（`sec eval` の式）が使う。 */
 const EMPTY_CELLS: CellValues = () => ({ kind: 'nil' });
@@ -269,8 +274,74 @@ export function evaluateMacro(source: string, sheet: TransactionalSheet): Evalua
   const parsed = parseOrFail(parseMacroBody, source);
   // 読めなかったマクロは何も実行しないので、トランザクションを開かない。
   if (parsed.kind === 'failed') return parsed.evaluation;
-  const body = parsed.tree;
+  return runInTransaction(parsed.tree, EMPTY_ENVIRONMENT, sheet);
+}
 
+/**
+ * マクロを起動するメッセージ（§7.1）。**起動の構文は言語に無い**ので、受け手を持たず、
+ * 引数は評価済みの値で受け取る。引数を評価するのは起動する側（UI・MCP・ゴールデンテスト）。
+ */
+export interface MacroMessage {
+  /** 単項セレクタか、連結したキーワードセレクタ（`from:to:`）。 */
+  readonly selector: string;
+  /** 引数の値。**セルはセルのまま渡してよい**——引数はセルのまま持つ（一時変数と同じ、ADR-0028）。 */
+  readonly arguments: readonly Value[];
+}
+
+/**
+ * 宣言部を持つマクロ定義（開始記号 `macro definition`、§7.1）にメッセージを送って起動する。
+ *
+ * **失敗の順序は §6.0 の送信に揃える。** 定義が読めなければ `#Syntax`（評価より前に決まる）、
+ * 次に引数のエラー（左から最初のもの）、最後にパターンと違うセレクタの `#DoesNotUnderstand`。
+ * **どれもマクロを始めないので、トランザクションを開かない。**
+ * 本体を走らせてからは `evaluateMacro` と同じである。
+ *
+ * @param source マクロ定義の原文（パターンと本体）
+ * @param message 起動するメッセージ
+ * @param sheet 読み書きするシート（§4.2、§7.4）
+ * @returns 値と診断の組。`evaluateMacro` と同じく、セルは返さない（ADR-0031）
+ * @throws {Error} セレクタが合うのに引数の数がパターンと違う場合（呼ぶ側の誤り）
+ */
+export function evaluateMacroDefinition(
+  source: string,
+  message: MacroMessage,
+  sheet: TransactionalSheet,
+): Evaluation {
+  const parsed = parseOrFail(parseMacroDefinition, source);
+  if (parsed.kind === 'failed') return parsed.evaluation;
+  const { selector, parameters, body } = parsed.tree;
+
+  const received: ReceivedValue[] = [];
+  for (const argument of message.arguments) {
+    // **引数の値がエラーならマクロを始めない**（利用者の選択）。束ねて走らせると、
+    // 引数を読まない本体ではエラーが黙って消える（ADR-0027）。
+    if (argument.kind === 'error') return { value: argument };
+    received.push(argument);
+  }
+  if (message.selector !== selector) return { value: DOES_NOT_UNDERSTAND };
+  if (received.length !== parameters.length) {
+    throw new Error(
+      `${selector} の引数は ${parameters.length} 個ですが、${received.length} 個渡されました。`,
+    );
+  }
+
+  // 引数は本体の外側の束縛で、一時変数と同じ入れ物に置く。**代入できないことは
+  // 構文解析器が保証する**（§7.3）ので、入れ物が書き換わることは無い。
+  const environment: Environment = new Map(
+    parameters.map((name, index) => [name, { value: received[index] ?? NIL }]),
+  );
+  return runInTransaction(body, environment, sheet);
+}
+
+/**
+ * マクロの本体を 1 つのトランザクションの中で走らせる（要件 F-3-4）。
+ * 値がエラーなら書き込みを巻き戻し、そうでなければ確定する。
+ */
+function runInTransaction(
+  body: Body,
+  environment: Environment,
+  sheet: TransactionalSheet,
+): Evaluation {
   const transaction = sheet.begin();
   let value: Value;
   try {
@@ -278,7 +349,9 @@ export function evaluateMacro(source: string, sheet: TransactionalSheet): Evalua
     // 並べるだけでいくらでも長く走れてしまう。
     // **セルは閉じる前に値まで解決する**（ADR-0031）。巻き戻した後に読めば開始前の値になり、
     // マクロが終わった時点の値ではなくなる。解決した値がエラーなら失敗として巻き戻す。
-    value = heldValue(withinStack(() => runMacroBody(body, new StepBudget(), transaction)));
+    value = heldValue(
+      withinStack(() => runMacroBody(body, environment, new StepBudget(), transaction)),
+    );
   } catch (error) {
     // 評価器の外の失敗（実装の誤り）でも、書きかけのシートを残さない。
     rollbackAndRethrow(transaction, error);
@@ -324,9 +397,14 @@ function rollbackAndRethrow(transaction: MacroTransaction, error: unknown): neve
 /**
  * マクロ本体の文の列を評価し、マクロの値にする。**ブロックの中の `^` はここで受け止める**（§7.5）。
  */
-function runMacroBody(body: Body, budget: StepBudget, sheet: MacroSheet): Value {
+function runMacroBody(
+  body: Body,
+  outer: Environment,
+  budget: StepBudget,
+  sheet: MacroSheet,
+): Value {
   try {
-    const value = runStatements(body, declareTemporaries(EMPTY_ENVIRONMENT, body), budget, sheet);
+    const value = runStatements(body, declareTemporaries(outer, body), budget, sheet);
     // `^` が無ければ `nil`（§7.2）。マクロは値を返すために書くとは限らない。
     // `^` は列の最後にしか書けない（構文解析器が弾く）ので、最後の文だけを見ればよい。
     if (value.kind === 'error' || body.statements.at(-1)?.kind === 'return') return value;

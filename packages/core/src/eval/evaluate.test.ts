@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { type CellAddress, parseAddress } from '../model/address.ts';
 import { LiveSheet } from '../model/live-sheet.ts';
-import { evaluateFormula, evaluateMacro } from './evaluate.ts';
+import { evaluateFormula, evaluateMacro, evaluateMacroDefinition } from './evaluate.ts';
 import { printValue, type Value } from './value.ts';
 
 /** 原文を評価して値だけを取る。診断を見ないケースはこちらを使う。 */
@@ -1304,5 +1304,67 @@ describe('evaluateMacro はセルを返さない（ADR-0031）', () => {
     expect(printValue(evaluateMacro(source, sheet).value)).toBe('#DivideByZero');
     expect(sheet.contentAt(at('A1'))).toBe('1');
     expect(printValue(sheet.values(at('B1')))).toBe('1');
+  });
+});
+
+const integer = (value: number): Value => ({ kind: 'integer', value: BigInt(value) });
+
+// 起動の失敗が**トランザクションを開く前に決まる**ことはマクロの値に出ないので、ここで固定する。
+describe('evaluateMacroDefinition（§7.1）', () => {
+  const definition = 'from: start to: end\n  A1 := start.\n  ^ start + end';
+
+  it('パターンの引数を束ねて本体を走らせ、書き込みを確定する', () => {
+    const sheet = sheetOf({});
+    const message = { selector: 'from:to:', arguments: [integer(1), integer(3)] };
+    expect(printValue(evaluateMacroDefinition(definition, message, sheet).value)).toBe('4');
+    expect(sheet.contentAt(at('A1'))).toBe('1');
+  });
+
+  it('本体がエラーで終われば、起動したマクロの書き込みも巻き戻る', () => {
+    const sheet = sheetOf({ A1: '7' });
+    const message = { selector: 'from:to:', arguments: [integer(1), integer(0)] };
+    const failing = 'from: start to: end\n  A1 := start.\n  ^ start / end';
+    expect(printValue(evaluateMacroDefinition(failing, message, sheet).value)).toBe(
+      '#DivideByZero',
+    );
+    expect(sheet.contentAt(at('A1'))).toBe('7');
+  });
+
+  it.each([
+    ['定義が読めない', 'from: start to: end', 'from:to:', [integer(1), integer(3)], '#Syntax'],
+    [
+      '引数がエラー',
+      definition,
+      'from:to:',
+      [integer(1), { kind: 'error', error: 'DivideByZero' } as const],
+      '#DivideByZero',
+    ],
+    [
+      'セレクタがパターンと違う',
+      definition,
+      'to:from:',
+      [integer(1), integer(3)],
+      '#DoesNotUnderstand',
+    ],
+  ] as const)(
+    '起動の前に決まる失敗ではトランザクションを開かない: %s',
+    (_, source, selector, args, expected) => {
+      let opened = false;
+      const sheet = {
+        begin: () => {
+          opened = true;
+          return sheetOf({}).begin();
+        },
+      };
+      const { value } = evaluateMacroDefinition(source, { selector, arguments: args }, sheet);
+      expect(printValue(value)).toBe(expected);
+      expect(opened).toBe(false);
+    },
+  );
+
+  // セレクタが合えば引数の数はパターンで決まる。合わないのは呼ぶ側の誤りで、仕様上の状態ではない。
+  it('引数の数がパターンと合わなければ例外にする', () => {
+    const message = { selector: 'from:to:', arguments: [integer(1)] };
+    expect(() => evaluateMacroDefinition(definition, message, sheetOf({}))).toThrow();
   });
 });

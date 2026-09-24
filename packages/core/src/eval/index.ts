@@ -1,8 +1,10 @@
-export type { Diagnostic, Evaluation } from './evaluate.ts';
+export type { Diagnostic, Evaluation, MacroMessage } from './evaluate.ts';
 export {
   evaluateFormula,
   evaluateLiteral,
   evaluateMacro,
+  evaluateMacroDefinition,
+  evaluateParsedFormula,
   NotImplementedError,
 } from './evaluate.ts';
 export type {
