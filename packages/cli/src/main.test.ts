@@ -6,6 +6,8 @@
  */
 
 import { execFileSync } from 'node:child_process';
+import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
@@ -50,5 +52,32 @@ describe('sec の起動', () => {
     expect(result.stdout).toBe('');
     expect(result.stderr).toContain('使い方');
     expect(result.status).toBe(2);
+  });
+
+  // ファイルの読み書きと Worker の起動は、差し替えたホストでは確かめられない。
+  it('run はマクロを Worker で走らせ、--out にシートを書く', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sec-run-'));
+    const macro = join(dir, 'm.st');
+    const sheet = join(dir, 'in.json');
+    const out = join(dir, 'out.json');
+    writeFileSync(macro, 'B1 := A1 value * 2. ^ B1');
+    writeFileSync(sheet, '{"A1": "21"}');
+
+    expect(run('run', macro, '--sheet', sheet, '--out', out)).toEqual({
+      stdout: '42\nB1 := 42\n',
+      stderr: '',
+      status: 0,
+    });
+    expect(JSON.parse(readFileSync(out, 'utf8'))).toEqual({ A1: '21', B1: '42' });
+  });
+
+  it('run は時間の上限を超えたら 1 で終わる', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'sec-run-'));
+    const macro = join(dir, 'm.st');
+    writeFileSync(macro, '[true] whileTrue: [1]');
+
+    const result = run('run', macro, '--timeout', '1');
+    expect(result.stdout).toBe('#Timeout\n');
+    expect(result.status).toBe(1);
   });
 });

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { LIMIT, type Measurement, REQUIRED_CELLS } from './bench.ts';
-import { benchResult, runCommand } from './command.ts';
+import { benchResult, type CommandHost, runCommand } from './command.ts';
+import { executeMacro } from './macro.ts';
 
 describe('sec eval', () => {
   it('式を評価して値を表示する', async () => {
@@ -174,5 +175,198 @@ describe('ベンチの計測を出力に直す', () => {
   // 要件が数字を定めていない規模では合否を出さない（bench.ts の exceedances）。
   it('要件が定めていないセル数なら超過していても終了コード 0', async () => {
     expect(benchResult([measured(9999, 9999)], 500).exitCode).toBe(0);
+  });
+});
+
+describe('sec run', () => {
+  /**
+   * ファイルを覚えておき、マクロを Worker を使わずに走らせるホスト。
+   * **時間の上限は `worker-host.test.ts` が実際の Worker で見る。** ここは受け渡しだけ。
+   */
+  const hostWith = (files: Record<string, string>, timedOut = false) => {
+    const written = new Map<string, string>();
+    const timeouts: number[] = [];
+    const host: CommandHost = {
+      readText: (path) => {
+        const text = files[path];
+        if (text === undefined) throw new Error(`ENOENT: ${path}`);
+        return text;
+      },
+      writeText: (path, text) => {
+        if (path.startsWith('/readonly/')) throw new Error(`EACCES: ${path}`);
+        written.set(path, text);
+      },
+      runMacro: async (request, timeoutMs) => {
+        timeouts.push(timeoutMs);
+        return timedOut ? { kind: 'timedOut' } : executeMacro(request);
+      },
+    };
+    return { host, written, timeouts };
+  };
+
+  it('マクロを走らせて値を stdout に出す', async () => {
+    const { host } = hostWith({ 'm.st': '^ 3 + 4' });
+    expect(await runCommand(['run', 'm.st'], host)).toEqual({
+      stdout: '7\n',
+      stderr: '',
+      exitCode: 0,
+    });
+  });
+
+  // 値の後に、確定した書き込みを `番地 := 内容` の形で出す（ゴールデンテストの `!A1 := 1` と同じ区切り）。
+  it('値に続けて書き込んだセルを行の順に出す', async () => {
+    const { host } = hostWith({ 'm.st': "C1 := 'done'. A2 := 1. B1 := 6. ^ 6" });
+    expect((await runCommand(['run', 'm.st'], host)).stdout).toBe(
+      "6\nB1 := 6\nC1 := 'done'\nA2 := 1\n",
+    );
+  });
+
+  // 内容が空なら区切りの後に何も書かない。末尾の空白は見えないため。
+  it('空にしたセルは区切りだけで出す', async () => {
+    const { host } = hostWith({ 'm.st': 'A1 := nil', 'in.json': '{"A1": "3"}' });
+    expect((await runCommand(['run', 'm.st', '--sheet', 'in.json'], host)).stdout).toBe(
+      'nil\nA1 :=\n',
+    );
+  });
+
+  it('--sheet のセルをマクロが読む', async () => {
+    const { host } = hostWith({ 'm.st': '^ A1 value * 2', 'in.json': '{"A1": "21"}' });
+    expect((await runCommand(['run', 'm.st', '--sheet', 'in.json'], host)).stdout).toBe('42\n');
+  });
+
+  it('--out に実行後の空でない全セルを同じ形式で書く', async () => {
+    const { host, written } = hostWith({
+      'm.st': 'B1 := A1 value * 2',
+      'in.json': '{"A1": "3", "A2": "=A1 + 1"}',
+    });
+    await runCommand(['run', 'm.st', '--sheet', 'in.json', '--out', 'out.json'], host);
+    expect(JSON.parse(written.get('out.json') ?? 'null')).toEqual({
+      A1: '3',
+      B1: '6',
+      A2: '=A1 + 1',
+    });
+  });
+
+  it('--out が無ければ何も書かない', async () => {
+    const { host, written } = hostWith({ 'm.st': 'A1 := 3' });
+    await runCommand(['run', 'm.st'], host);
+    expect(written.size).toBe(0);
+  });
+
+  // 失敗したマクロは巻き戻る（F-3-4）。書き込みは出さず、--out は開始前のシートになる。
+  it('エラーで終わったら終了コード 1 で、書き込みを出さない', async () => {
+    const { host, written } = hostWith({
+      'm.st': 'A1 := 9. ^ 1 / 0',
+      'in.json': '{"A1": "3"}',
+    });
+    const result = await runCommand(
+      ['run', 'm.st', '--sheet', 'in.json', '--out', 'out.json'],
+      host,
+    );
+    expect(result).toEqual({ stdout: '#DivideByZero\n', stderr: '', exitCode: 1 });
+    expect(JSON.parse(written.get('out.json') ?? 'null')).toEqual({ A1: '3' });
+  });
+
+  it('構文エラーは位置と説明文を stderr に出す', async () => {
+    const { host } = hostWith({ 'm.st': '| a |\n^ a +' });
+    const result = await runCommand(['run', 'm.st'], host);
+    expect(result.stdout).toBe('#Syntax\n');
+    expect(result.stderr).toMatch(/^2:\d+: /);
+    expect(result.exitCode).toBe(1);
+  });
+
+  it('--send で宣言部を持つ定義を起動する', async () => {
+    const { host } = hostWith({ 'm.st': 'from: a to: b\n  ^ a + b' });
+    expect((await runCommand(['run', 'm.st', '--send', 'from: 1 to: 3'], host)).stdout).toBe('4\n');
+  });
+
+  it('読めない --send は終了コード 2', async () => {
+    const { host } = hostWith({ 'm.st': 'from: a to: b\n  ^ a + b' });
+    const result = await runCommand(['run', 'm.st', '--send', 'from: 1 to:'], host);
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('from: 1 to:');
+    expect(result.exitCode).toBe(2);
+  });
+
+  describe('時間の上限', () => {
+    it('既定は 5000ms', async () => {
+      const { host, timeouts } = hostWith({ 'm.st': '^ 1' });
+      await runCommand(['run', 'm.st'], host);
+      expect(timeouts).toEqual([5000]);
+    });
+
+    it('--timeout で変えられる', async () => {
+      const { host, timeouts } = hostWith({ 'm.st': '^ 1' });
+      await runCommand(['run', 'm.st', '--timeout', '250'], host);
+      expect(timeouts).toEqual([250]);
+    });
+
+    it.each(['0', '-1', '1.5', 'すぐ', ''])('--timeout %j は終了コード 2', async (value) => {
+      const { host, timeouts } = hostWith({ 'm.st': '^ 1' });
+      const result = await runCommand(['run', 'm.st', '--timeout', value], host);
+      expect(result.exitCode).toBe(2);
+      expect(timeouts).toEqual([]);
+    });
+
+    // 打ち切ったマクロの書き込みは反映しない（ADR-0027）。--out は開始前のシートになる。
+    it('超えたら #Timeout を出し、終了コード 1', async () => {
+      const { host, written } = hostWith({ 'm.st': 'A1 := 9', 'in.json': '{"A1": "3"}' }, true);
+      const result = await runCommand(
+        ['run', 'm.st', '--sheet', 'in.json', '--out', 'out.json', '--timeout', '100'],
+        host,
+      );
+      expect(result.stdout).toBe('#Timeout\n');
+      // ステップ数の上限の #Timeout と見分けられるように、時間で打ち切ったことを言う。
+      expect(result.stderr).toContain('100ms');
+      expect(result.exitCode).toBe(1);
+      expect(JSON.parse(written.get('out.json') ?? 'null')).toEqual({ A1: '3' });
+    });
+  });
+
+  describe('使い方の誤り', () => {
+    const { host } = hostWith({ 'm.st': '^ 1', 'bad.json': '{"A1": 3}' });
+
+    it.each([
+      ['マクロのファイルが無い', ['run']],
+      ['マクロのファイルが 2 つ', ['run', 'm.st', 'n.st']],
+      ['知らないオプション', ['run', 'm.st', '--verbose']],
+      ['オプションの値が無い', ['run', 'm.st', '--sheet']],
+      ['同じオプションが 2 度', ['run', 'm.st', '--send', 'a', '--send', 'b']],
+    ])('%s なら終了コード 2', async (_, argv) => {
+      const result = await runCommand(argv, host);
+      expect(result.stdout).toBe('');
+      expect(result.exitCode).toBe(2);
+    });
+
+    it('読めないマクロのファイルはそのパスを言う', async () => {
+      const result = await runCommand(['run', 'missing.st'], host);
+      expect(result.stderr).toContain('missing.st');
+      expect(result.exitCode).toBe(2);
+    });
+
+    it('読めないシートのファイルはそのパスを言う', async () => {
+      const result = await runCommand(['run', 'm.st', '--sheet', 'missing.json'], host);
+      expect(result.stderr).toContain('missing.json');
+      expect(result.exitCode).toBe(2);
+    });
+
+    it('シートの JSON の誤りは理由を言う', async () => {
+      const result = await runCommand(['run', 'm.st', '--sheet', 'bad.json'], host);
+      expect(result.stderr).toContain('bad.json');
+      expect(result.stderr).toContain('A1');
+      expect(result.exitCode).toBe(2);
+    });
+
+    // 値は出す。マクロは走り終えており、書けなかったのは出力先だけである。
+    it('--out に書けなければそのパスを言って終了コード 2', async () => {
+      const result = await runCommand(['run', 'm.st', '--out', '/readonly/out.json'], host);
+      expect(result.stdout).toBe('1\n');
+      expect(result.stderr).toContain('/readonly/out.json');
+      expect(result.exitCode).toBe(2);
+    });
+  });
+
+  it('使い方に run が載っている', async () => {
+    expect((await runCommand(['--help'])).stdout).toContain('sec run');
   });
 });
