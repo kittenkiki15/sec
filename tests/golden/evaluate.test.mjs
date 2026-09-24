@@ -14,7 +14,12 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { evaluateFormula, evaluateMacro, printValue } from '../../packages/core/src/eval/index.ts';
-import { parseAddress, recalculate, Sheet } from '../../packages/core/src/model/index.ts';
+import {
+  LiveSheet,
+  parseAddress,
+  recalculate,
+  Sheet,
+} from '../../packages/core/src/model/index.ts';
 import {
   formatGoldenFailures,
   parseGoldenFile,
@@ -52,14 +57,17 @@ const COVERED = [
  *
  * **番地は正規化される**（ADR-0020）ので、`!A007 := 1` は `A7` のセルになる。
  */
-const buildSheet = (cells) => {
-  const sheet = new Sheet();
-  for (const [spelling, content] of cells) {
+const addressed = (cells) =>
+  [...cells].map(([spelling, content]) => {
     const address = parseAddress(spelling);
     // ハーネスが綴りを検査済み（`parseGoldenFile`）なので、ここへは来ない。
     if (address === null) throw new Error(`${spelling} はセル参照の形ではありません。`);
-    sheet.put(address, content);
-  }
+    return [address, content];
+  });
+
+const buildSheet = (cells) => {
+  const sheet = new Sheet();
+  for (const [address, content] of addressed(cells)) sheet.put(address, content);
   return sheet;
 };
 
@@ -68,12 +76,15 @@ const buildSheet = (cells) => {
  *
  * **マクロは本体だけを評価できる**（M4 段階 1）。宣言部を持つ定義の起動（`!macro from: 1 to: 3`）は
  * 段階 6 のもので、そのケースには `!pending` が付いている。
+ *
+ * **マクロはセルに書き込む**（§7.4）ので、値を保つだけでなく書き込みを下流に伝えるシートを渡す。
  */
 const evaluate = ({ source, sheet, kind, send }) => {
-  const cells = recalculate(buildSheet(sheet));
-  if (kind === 'formula') return printValue(evaluateFormula(source, cells).value);
+  if (kind === 'formula') {
+    return printValue(evaluateFormula(source, recalculate(buildSheet(sheet))).value);
+  }
   if (send !== null) throw new Error('未実装: マクロの起動はまだできません。');
-  return printValue(evaluateMacro(source, cells).value);
+  return printValue(evaluateMacro(source, new LiveSheet(addressed(sheet))).value);
 };
 
 describe('ゴールデンテストの評価', () => {
