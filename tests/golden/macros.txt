@@ -62,7 +62,6 @@ monthlyTotal
 
 "^ で値を返す
 !macro
-!pending m4
 ^ 3
 => 3
 
@@ -72,32 +71,27 @@ monthlyTotal
 
 "文は . で区切る
 !macro
-!pending m4
 1 + 1.
 ^ 2 + 2
 => 4
 
 "末尾の . は書いてよい
 !macro
-!pending m4
 ^ 3.
 => 3
 
 "文が空になる区切りは書けない
 !macro
-!pending m4
 1 + 1. . ^ 2
 => #Syntax
 
 "^ が無ければ nil を返す。マクロは値を返すために書くとは限らない
 !macro
-!pending m4
 1 + 1
 => nil
 
 "^ は文の列の最後にだけ書ける。後ろに文は続けられない
 !macro
-!pending m4
 ^ 1.
 2 + 2
 => #Syntax
@@ -105,7 +99,6 @@ monthlyTotal
 "--- 一時変数 ---
 
 !macro
-!pending m4
 | a |
 a := 3.
 ^ a + 1
@@ -113,14 +106,12 @@ a := 3.
 
 "宣言しただけの一時変数は nil
 !macro
-!pending m4
 | a |
 ^ a
 => nil
 
 "名前は 1 つの宣言に並べる
 !macro
-!pending m4
 | a b |
 a := 3.
 b := 4.
@@ -129,14 +120,12 @@ b := 4.
 
 "何も宣言しない形も書ける
 !macro
-!pending m4
 | |
 ^ 1
 => 1
 
 "宣言は本体の先頭にだけ置ける
 !macro
-!pending m4
 | a |
 a := 1.
 | b |
@@ -145,7 +134,6 @@ a := 1.
 
 "宣言を 2 つに分けられない
 !macro
-!pending m4
 | a |
 | b |
 ^ 1
@@ -153,14 +141,12 @@ a := 1.
 
 "同じ名前を二重に宣言できない
 !macro
-!pending m4
 | a a |
 ^ 1
 => #Syntax
 
 "宣言だけで文が無い本体は書けない（§5.1 の [] と揃えている）
 !macro
-!pending m4
 | a |
 => #Syntax
 
@@ -212,14 +198,12 @@ a := 1.
 "どの文でも値がエラーになったら、マクロはそのエラーで終わる。後ろの文は評価しない。
 "値を捨てる文でも同じで、エラーを黙って捨てる経路を作らない
 !macro
-!pending m4
 1 / 0.
 ^ 3
 => #DivideByZero
 
 "一時変数への代入の右辺がエラーでも同じ。エラーを変数に抱えて先へ進めない
 !macro
-!pending m4
 | a |
 a := 1 / 0.
 ^ 3
@@ -227,7 +211,6 @@ a := 1 / 0.
 
 "返す値がエラーなら、そのエラーで終わる
 !macro
-!pending m4
 ^ 1 / 0
 => #DivideByZero
 
