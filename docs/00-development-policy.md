@@ -59,7 +59,7 @@ MCP サーバー（`packages/mcp`）は「エンドユーザーが自然言語�
 ```bash
 pnpm sec eval "3 + 4 * 2"           # 式を評価
 pnpm sec parse "A1..A10 sum"        # AST を表示
-pnpm sec run book.secbook macro.st  # マクロ実行
+pnpm sec run macro.st --sheet in.json  # マクロ実行（ADR-0034）
 pnpm sec bench 10000                # ベンチ
 ```
 

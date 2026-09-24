@@ -17,8 +17,8 @@ import {
   evaluateFormula,
   evaluateMacro,
   evaluateMacroDefinition,
-  evaluateParsedFormula,
   printValue,
+  readMacroMessage,
 } from '../../packages/core/src/eval/index.ts';
 import {
   LiveSheet,
@@ -26,7 +26,6 @@ import {
   recalculate,
   Sheet,
 } from '../../packages/core/src/model/index.ts';
-import { parseFormula } from '../../packages/core/src/syntax/parser.ts';
 import {
   formatGoldenFailures,
   parseGoldenFile,
@@ -80,21 +79,12 @@ const buildSheet = (cells) => {
 
 /**
  * `!macro from: 1 to: 3` の送信を、マクロを起動するメッセージにする（ADR-0018）。
- *
- * **受け手を持たない送信は言語に無い**（§7.1）ので、`nil` を受け手に置いて数式として読み、
- * 最上位の送信のセレクタと引数を取り出す。引数は起動する側が評価する（`MacroMessage`）。
- * **引数はマクロが書き込むシートで評価する。** セルの値は読み先を捕まえるので（§4.2）、
- * 別のシートで評価するとマクロの書き込みを読めない。
+ * **引数はマクロが書き込むシートで評価する**（`readMacroMessage`）。
  */
 const messageOf = (send, values) => {
-  const tree = parseFormula(`nil ${send}`);
-  if (tree.kind !== 'send' || tree.receiver.kind !== 'nil') {
-    throw new Error(`${send} は 1 つの送信ではありません。`);
-  }
-  return {
-    selector: tree.selector,
-    arguments: tree.arguments.map((argument) => evaluateParsedFormula(argument, values).value),
-  };
+  const message = readMacroMessage(send, values);
+  if (message === null) throw new Error(`${send} は 1 つの送信ではありません。`);
+  return message;
 };
 
 /**

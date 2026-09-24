@@ -6,6 +6,7 @@ export {
   evaluateMacroDefinition,
   evaluateParsedFormula,
   NotImplementedError,
+  readMacroMessage,
 } from './evaluate.ts';
 export type {
   ArrayValue,

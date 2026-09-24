@@ -6,9 +6,15 @@
  * 確かめられるようにするためで、こちらは起動して初めて分かることだけを見る。
  */
 
+import { readFileSync, writeFileSync } from 'node:fs';
 import { runCommand } from './command.ts';
+import { runMacroInWorker } from './worker-host.ts';
 
-const result = runCommand(process.argv.slice(2));
+const result = await runCommand(process.argv.slice(2), {
+  readText: (path) => readFileSync(path, 'utf8'),
+  writeText: (path, text) => writeFileSync(path, text),
+  runMacro: runMacroInWorker,
+});
 
 if (result.stdout !== '') process.stdout.write(result.stdout);
 if (result.stderr !== '') process.stderr.write(result.stderr);
