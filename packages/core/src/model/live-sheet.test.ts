@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { printValue } from '../eval/value.ts';
 import { type CellAddress, parseAddress, printAddress } from './address.ts';
-import type { InvalidationIndex } from './invalidation.ts';
+import { type InvalidationIndex, recordedReads } from './invalidation.ts';
 import { LiveSheet, type LiveSheetOptions } from './live-sheet.ts';
 import { recalculate } from './recalc.ts';
 import { Sheet } from './sheet.ts';
@@ -312,5 +312,168 @@ describe('無効化の索引は差し替えられる（ADR-0024）', () => {
     );
     put(live, 'A1', '2');
     expect(cellValue(live, 'C1')).toBe('30');
+  });
+});
+
+/**
+ * 計算したセルを記録する索引。**いつ計算したか**を外から見るために、既定の索引を包む。
+ * セルを計算すると必ず観測が索引に渡る（`Recalculation`）ので、記録が計算の記録になる。
+ */
+function observing(log: string[]): LiveSheetOptions {
+  return {
+    invalidation: () => {
+      const index = recordedReads();
+      return {
+        observe(cell, observation) {
+          log.push(printAddress(cell));
+          index.observe(cell, observation);
+        },
+        forget: (cell) => index.forget(cell),
+        readersOf: (address) => index.readersOf(address),
+      };
+    },
+  };
+}
+
+describe('LiveSheet のトランザクション（要件 F-3-4、ADR-0027 の案 C）', () => {
+  const contents = { A1: '1', B1: '=A1 + 1', C1: '=B1 * 2' };
+
+  it('書き込みは下流の値を捨てるだけで、計算しない', () => {
+    const log: string[] = [];
+    const live = liveSheetOf(contents, observing(log));
+    log.length = 0;
+
+    live.begin().put(addressOf('A1'), '5');
+    expect(log).toEqual([]);
+  });
+
+  it('読まれたセルだけをその場で計算する。書き込みは下流に届いている', () => {
+    const log: string[] = [];
+    const live = liveSheetOf(contents, observing(log));
+    log.length = 0;
+
+    const transaction = live.begin();
+    transaction.put(addressOf('A1'), '5');
+    expect(printValue(transaction.values(addressOf('B1')))).toBe('6');
+    expect([...log].sort()).toEqual(['A1', 'B1']);
+  });
+
+  it('commit で残りを計算して確定し、計算し直したセルを返す', () => {
+    const live = liveSheetOf(contents);
+    const transaction = live.begin();
+    transaction.put(addressOf('A1'), '5');
+    transaction.values(addressOf('B1'));
+
+    // 途中で読んだセルも返す。**描き直す範囲**なので、いつ計算したかを問わない。
+    expect([...transaction.commit()].map(printAddress).sort()).toEqual(['A1', 'B1', 'C1']);
+    expect(live.contentAt(addressOf('A1'))).toBe('5');
+    expect(cellValue(live, 'C1')).toBe('12');
+  });
+
+  it('何度書いても commit はそれぞれの下流を返す', () => {
+    const live = liveSheetOf({ ...contents, A2: '1', B2: '=A2 + 1' });
+    const transaction = live.begin();
+    transaction.put(addressOf('A1'), '5');
+    transaction.put(addressOf('A2'), '7');
+
+    expect([...transaction.commit()].map(printAddress).sort()).toEqual([
+      'A1',
+      'A2',
+      'B1',
+      'B2',
+      'C1',
+    ]);
+    expect(cellValue(live, 'B2')).toBe('8');
+  });
+
+  // **控えるのは原文**なので、書き込み先にあった数式もそのまま戻る（ADR-0027）。
+  it('rollback で開始前の内容と値に戻る。書き込み先の数式も戻る', () => {
+    const live = liveSheetOf(contents);
+    const transaction = live.begin();
+    transaction.put(addressOf('A1'), '5');
+    transaction.put(addressOf('B1'), '7');
+    transaction.values(addressOf('C1'));
+    transaction.rollback();
+
+    expect(live.contentAt(addressOf('A1'))).toBe('1');
+    expect(live.contentAt(addressOf('B1'))).toBe('=A1 + 1');
+    expect(cellValue(live, 'B1')).toBe('2');
+    expect(cellValue(live, 'C1')).toBe('4');
+  });
+
+  it('同じセルに何度書いても、戻るのは開始前の内容', () => {
+    const live = liveSheetOf(contents);
+    const transaction = live.begin();
+    transaction.put(addressOf('A1'), '5');
+    transaction.put(addressOf('A1'), '6');
+    transaction.rollback();
+
+    expect(live.contentAt(addressOf('A1'))).toBe('1');
+    expect(cellValue(live, 'C1')).toBe('4');
+  });
+
+  it('空だったセルは空に戻る（ADR-0010）', () => {
+    const live = liveSheetOf({ B1: '=A1 isNil' });
+    const transaction = live.begin();
+    transaction.put(addressOf('A1'), '3');
+    expect(cellValue(live, 'B1')).toBe('false');
+    transaction.rollback();
+
+    expect(live.contentAt(addressOf('A1'))).toBe('');
+    expect(cellValue(live, 'A1')).toBe('nil');
+    expect(cellValue(live, 'B1')).toBe('true');
+  });
+
+  it('rollback の後の値は、開始前の内容からフル再計算した値と一致する（要件 F-4-4）', () => {
+    const before = { A1: '1', A2: '=A1 + A3', A3: '=A2', B1: '=(A1 to: A3) size' };
+    const live = liveSheetOf(before);
+    const transaction = live.begin();
+    transaction.put(addressOf('A3'), '10');
+    transaction.values(addressOf('A2'));
+    transaction.put(addressOf('A4'), '=A2');
+    transaction.rollback();
+
+    const expected = fullRecalculation(before);
+    for (const spelling of ['A1', 'A2', 'A3', 'A4', 'B1']) {
+      expect(cellValue(live, spelling)).toBe(expected(spelling));
+    }
+  });
+});
+
+describe('トランザクションは 1 度に 1 つ（要件 F-3-4）', () => {
+  // **開いている間の書き込みはすべて取り消しの対象でなければならない。** 外から書けると、
+  // 巻き戻しがその書き込みを知らずに残すか、知らずに消す。
+  it('開いている間は LiveSheet に直接は書けない', () => {
+    const live = liveSheetOf({ A1: '1' });
+    live.begin();
+    expect(() => live.put(addressOf('A1'), '2')).toThrow();
+  });
+
+  it('開いている間は重ねて開けない', () => {
+    const live = liveSheetOf({ A1: '1' });
+    live.begin();
+    expect(() => live.begin()).toThrow();
+  });
+
+  it('閉じたトランザクションには書けず、閉じ直せない', () => {
+    const live = liveSheetOf({ A1: '1' });
+    const committed = live.begin();
+    committed.commit();
+    expect(() => committed.put(addressOf('A1'), '2')).toThrow();
+    expect(() => committed.commit()).toThrow();
+    expect(() => committed.rollback()).toThrow();
+
+    const rolledBack = live.begin();
+    rolledBack.rollback();
+    expect(() => rolledBack.put(addressOf('A1'), '2')).toThrow();
+    expect(() => rolledBack.commit()).toThrow();
+  });
+
+  it('閉じた後は直接書けるし、次のトランザクションを開ける', () => {
+    const live = liveSheetOf({ A1: '1', B1: '=A1 + 1' });
+    live.begin().rollback();
+    expect(put(live, 'A1', '2')).toEqual(['A1', 'B1']);
+    live.begin().commit();
+    expect(cellValue(live, 'B1')).toBe('3');
   });
 });

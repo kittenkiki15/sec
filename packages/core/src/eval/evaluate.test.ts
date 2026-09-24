@@ -1143,3 +1143,90 @@ describe('evaluateMacro のセルへの代入（§7.4）', () => {
     expect(contentAfter('A1 := 1. A1 := A1 + 1')).toBe('2');
   });
 });
+
+/** 内容を置いたシートを作る。 */
+const sheetOf = (contents: Record<string, string>): LiveSheet =>
+  new LiveSheet(Object.entries(contents).map(([spelling, content]) => [at(spelling), content]));
+
+// **巻き戻しはマクロの値には出ない**ので、ゴールデンテストでは観測できない（ADR-0018）。
+describe('evaluateMacro のトランザクション（要件 F-3-4、ADR-0027）', () => {
+  const contents = { A1: '1', B1: '=A1 + 1', C1: '=B1 * 2' };
+
+  it('成功したマクロの書き込みは残り、下流も確定する', () => {
+    const sheet = sheetOf(contents);
+    expect(printValue(evaluateMacro('A1 := 5. ^ B1', sheet).value)).toBe('6');
+    expect(sheet.contentAt(at('A1'))).toBe('5');
+    expect(printValue(sheet.values(at('C1')))).toBe('12');
+  });
+
+  it.each([
+    ['値を捨てる文のエラー', 'A1 := 5. 1 / 0', '#DivideByZero'],
+    ['書き込めない値', 'A1 := 5. A2 := [1]', '#TypeError'],
+    ['書き込み先を解決できない', 'A1 := 5. A0 := 1', '#Ref'],
+    ['^ の値がエラー', 'A1 := 5. ^ B1 / 0', '#DivideByZero'],
+    ['ブロックの中の ^ の値がエラー', 'A1 := 5. #(1) do: [:e | ^ e / 0]. ^ 0', '#DivideByZero'],
+    ['ステップ数の上限', 'A1 := 5. ^ (1 to: 1e400) sum', '#Timeout'],
+    // 深い入れ子のリテラルは構文解析で尽きて何も実行しないので、評価器の再帰で尽きさせる。
+    ['再帰が尽きる', '| f | f := [:n | f value: n + 1]. A1 := 5. ^ f value: 1', '#Timeout'],
+  ])('エラーで終わったマクロの書き込みは残らない: %s', (_, source, expected) => {
+    const sheet = sheetOf(contents);
+    expect(printValue(evaluateMacro(source, sheet).value)).toBe(expected);
+    expect(sheet.contentAt(at('A1'))).toBe('1');
+    expect(sheet.contentAt(at('A2'))).toBe('');
+    expect(printValue(sheet.values(at('C1')))).toBe('4');
+  });
+
+  it('巻き戻した後のシートには、また書き込める', () => {
+    const sheet = sheetOf(contents);
+    evaluateMacro('A1 := 5. 1 / 0', sheet);
+    evaluateMacro('A1 := 7', sheet);
+    expect(printValue(sheet.values(at('C1')))).toBe('16');
+  });
+
+  // 評価器の外の失敗（実装の誤り）で抜けても、書きかけのシートを残さない。
+  it('例外で抜けても巻き戻してから投げ直す', () => {
+    const calls: string[] = [];
+    const failing = {
+      begin: () => ({
+        values: () => {
+          throw new Error('読めない');
+        },
+        put: () => calls.push('put'),
+        commit: () => calls.push('commit'),
+        rollback: () => calls.push('rollback'),
+      }),
+    };
+    expect(() => evaluateMacro('A1 := 1. ^ B1 + 1', failing)).toThrow('読めない');
+    expect(calls).toEqual(['put', 'rollback']);
+  });
+
+  // 読めないマクロは何も実行しないので、開く必要が無い。
+  it('構文エラーのマクロはトランザクションを開かない', () => {
+    const sheet = sheetOf(contents);
+    evaluateMacro('A1 := 5. .', sheet);
+    expect(() => sheet.put(at('A1'), '2')).not.toThrow();
+  });
+});
+
+// **マクロの値は終了時点でセルの値まで解決し、それがエラーなら失敗とする**（ADR-0031、利用者の選択）。
+// 解決しないと、表記は巻き戻した後のセルを読んでしまう。
+describe('evaluateMacro はセルを返さない（ADR-0031）', () => {
+  const contents = { A1: '1', B1: '=1 / A1' };
+
+  it('^ がセルを返したら、終了時点のそのセルの値を返す', () => {
+    const sheet = sheetOf(contents);
+    const { value } = evaluateMacro('A1 := 2. ^ B1', sheet);
+    expect(value).toEqual({ kind: 'decimal', value: 0.5 });
+  });
+
+  it.each([
+    ['^ の値', 'A1 := 0. ^ B1'],
+    ['ブロックの中の ^ の値', 'A1 := 0. #(1) do: [:e | ^ B1]. ^ 0'],
+    ['一時変数に持ったセル', '| a | a := B1. A1 := 0. ^ a'],
+  ])('返したセルの値がエラーなら、そのエラーで終わり巻き戻す: %s', (_, source) => {
+    const sheet = sheetOf(contents);
+    expect(printValue(evaluateMacro(source, sheet).value)).toBe('#DivideByZero');
+    expect(sheet.contentAt(at('A1'))).toBe('1');
+    expect(printValue(sheet.values(at('B1')))).toBe('1');
+  });
+});
