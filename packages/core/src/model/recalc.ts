@@ -24,7 +24,14 @@
 
 import { evaluateParsedFormula, type ParsedFormula, parseFormulaOrFail } from '../eval/evaluate.ts';
 import { type CellValues, type HeldValue, heldValue } from '../eval/value.ts';
-import { type CellAddress, compareColumns, isResolvable, printAddress } from './address.ts';
+import {
+  type CellAddress,
+  columnAt,
+  columnIndex,
+  compareColumns,
+  isResolvable,
+  printAddress,
+} from './address.ts';
 import { readContent } from './content.ts';
 import { type Dependency, type DependencyExtractor, staticDependencies } from './dependencies.ts';
 import {
@@ -174,34 +181,58 @@ export class Recalculation {
    */
   #settleUpstreamOf(address: CellAddress): void {
     const key = printAddress(address);
-    if (!this.#unsettled.has(key) || this.#values.has(key)) return;
-    const start = this.#formulas.get(key);
-    // 定数セルは何も読まないので、深さの問題が無い。
+    const start = this.#uncomputedFormula(key);
+    // 計算済みのセルと定数セルは、上流へ潜らない。
     if (start === undefined) return;
 
-    /** 順序を組む相手。**値を持つセルは辺を張る相手にならない**（`#evaluate`）。 */
-    const candidates = new Map<string, FormulaCell>();
-    for (const unsettled of this.#unsettled.keys()) {
-      if (this.#values.has(unsettled)) continue;
-      const formula = this.#formulas.get(unsettled);
-      if (formula !== undefined) candidates.set(unsettled, formula);
-    }
-
+    // **読まれたセルの依存から辿る。** 捨てたままのセルを全部見ると、読まない枝の数だけ
+    // 読むたびに費用がかかり、枝を順に読むマクロでは読む回数との積になる。
     const upstream = new Map<string, FormulaCell>([[key, start]]);
     // **先頭から取り出すのに `shift` を使わない。** 並びが長いほど費用が嵩む。
     const queue = [start];
     for (let index = 0; index < queue.length; index += 1) {
       const cell = queue[index];
       if (cell === undefined) continue;
-      for (const precedent of precedentsOf(cell.dependencies, candidates)) {
-        const formula = candidates.get(precedent);
-        if (formula === undefined || upstream.has(precedent)) continue;
+      for (const [precedent, formula] of this.#uncomputedPrecedentsOf(cell.dependencies)) {
+        if (upstream.has(precedent)) continue;
         upstream.set(precedent, formula);
         queue.push(formula);
       }
     }
 
     for (const cell of topologicalOrder(upstream)) this.#valueAt(cell.address);
+  }
+
+  /** 値を捨てたまま、まだ計算していない数式セル。**値を持つセルは辺を張る相手にならない。** */
+  #uncomputedFormula(key: string): FormulaCell | undefined {
+    if (!this.#unsettled.has(key) || this.#values.has(key)) return undefined;
+    return this.#formulas.get(key);
+  }
+
+  /** 依存のうち、まだ計算していない数式セル（綴りと数式の組）。 */
+  #uncomputedPrecedentsOf(
+    dependencies: readonly Dependency[],
+  ): Iterable<readonly [string, FormulaCell]> {
+    const found = new Map<string, FormulaCell>();
+    const note = (key: string): void => {
+      const formula = this.#uncomputedFormula(key);
+      if (formula !== undefined) found.set(key, formula);
+    };
+
+    for (const dependency of dependencies) {
+      if (dependency.kind === 'cell') {
+        note(printAddress(dependency.address));
+        continue;
+      }
+      // **矩形は小さい方から見る。** 中のセルを数え上げる費用は矩形の大きさで、
+      // 捨てたセルが中にあるかを見る費用は捨てたセルの数である（`A1..A1000000` もありうる）。
+      if (areaOf(dependency) <= BigInt(this.#unsettled.size)) {
+        for (const cell of cellsInside(dependency)) note(printAddress(cell));
+      } else {
+        for (const [key, cell] of this.#unsettled) if (isInside(dependency, cell)) note(key);
+      }
+    }
+    return found;
   }
 
   /**
@@ -422,4 +453,27 @@ function isInside(
     rectangle.topLeft.row <= address.row &&
     address.row <= rectangle.bottomRight.row
   );
+}
+
+/** 矩形の中のセルの数。 */
+function areaOf(rectangle: {
+  readonly topLeft: CellAddress;
+  readonly bottomRight: CellAddress;
+}): bigint {
+  const columns = columnIndex(rectangle.bottomRight.column) - columnIndex(rectangle.topLeft.column);
+  return (columns + 1n) * (rectangle.bottomRight.row - rectangle.topLeft.row + 1n);
+}
+
+/** 矩形の中のセルを数え上げる。**大きさは呼ぶ側が `areaOf` で確かめる。** */
+function* cellsInside(rectangle: {
+  readonly topLeft: CellAddress;
+  readonly bottomRight: CellAddress;
+}): Iterable<CellAddress> {
+  const last = columnIndex(rectangle.bottomRight.column);
+  for (let column = columnIndex(rectangle.topLeft.column); column <= last; column += 1n) {
+    const spelling = columnAt(column);
+    for (let row = rectangle.topLeft.row; row <= rectangle.bottomRight.row; row += 1n) {
+      yield { column: spelling, row };
+    }
+  }
 }
