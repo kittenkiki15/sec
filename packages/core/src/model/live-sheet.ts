@@ -39,6 +39,8 @@ export interface SheetTransaction extends MacroTransaction {
   /**
    * 書き込みを確定し、捨てたままのセルをまとめて計算する。
    *
+   * **計算してから閉じる。** 計算が例外で抜けたら開いたままなので、`rollback` できる。
+   *
    * @returns 計算し直したセルの番地。**書き込んだセルと、途中で読まれたセルも含む**
    * @throws {Error} 閉じた後に呼んだ場合
    */
@@ -46,6 +48,8 @@ export interface SheetTransaction extends MacroTransaction {
 
   /**
    * 書き込んだセルに開始前の原文を書き戻す。**値も開始前と同じになる**（要件 F-4-4）。
+   *
+   * **原文を戻したら閉じる。** 後の計算が例外で抜けても閉じており、値は読まれたときに戻る。
    *
    * @throws {Error} 閉じた後に呼んだ場合
    */
@@ -132,32 +136,35 @@ export class LiveSheet {
       if (!originals.has(key)) originals.set(key, [address, before]);
     };
 
-    const close = (): void => {
+    const ensureOpen = (): void => {
       if (this.#transaction !== transaction) {
         throw new Error('閉じたトランザクションは使えません。');
       }
-      this.#transaction = null;
     };
 
     const transaction: SheetTransaction = {
       values: this.values,
       put: (address, content) => {
-        if (this.#transaction !== transaction) {
-          throw new Error('閉じたトランザクションには書き込めません。');
-        }
+        ensureOpen();
         write(address, content);
       },
       commit: () => {
-        close();
-        return this.#recalculation.settle();
+        ensureOpen();
+        // **計算してから閉じる。** 計算が例外で抜けたときに開いたままなら、まだ巻き戻せる。
+        const settled = this.#recalculation.settle();
+        this.#transaction = null;
+        return settled;
       },
       rollback: () => {
-        close();
+        ensureOpen();
         // **控えたのは原文**なので、書き込み先にあった数式もそのまま戻る（ADR-0027）。
         for (const [address, content] of originals.values()) {
           this.#sheet.put(address, content);
           this.#recalculation.invalidate(address);
         }
+        // **原文を戻したら閉じる。** 後の計算が例外で抜けても、捨てたセルは読まれたときに
+        // 計算されるので値は開始前に戻る。開いたままにすると、シートに二度と書けなくなる。
+        this.#transaction = null;
         this.#recalculation.settle();
       },
     };

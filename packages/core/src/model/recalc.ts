@@ -165,8 +165,9 @@ export class Recalculation {
     }
 
     const settled = [...this.#unsettled.values()];
-    this.#unsettled.clear();
     this.#evaluate(formulas, settled);
+    // **計算し終えてから忘れる。** 途中で例外が抜けたら、次の `settle` がまた拾う。
+    this.#unsettled.clear();
     return settled;
   }
 

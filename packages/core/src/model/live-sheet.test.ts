@@ -522,6 +522,22 @@ describe('確定の計算が例外で抜けたとき（要件 F-3-4）', () => {
     expect(cellValue(live, 'C1')).toBe('4');
   });
 
+  // 開いたままにすると、そのシートには二度と書けなくなる。原文さえ戻れば、値は読まれたときに戻る。
+  it('巻き戻しの計算が例外で抜けても、原文は戻り、トランザクションは閉じる', () => {
+    const failing = { now: false };
+    const live = liveSheetOf(contents, failingWhile(failing));
+    const transaction = live.begin();
+    transaction.put(addressOf('A1'), '5');
+
+    failing.now = true;
+    expect(() => transaction.rollback()).toThrow('観測できない');
+    failing.now = false;
+
+    expect(live.contentAt(addressOf('A1'))).toBe('1');
+    expect(cellValue(live, 'C1')).toBe('4');
+    expect(put(live, 'A1', '2')).toEqual(['A1', 'B1', 'C1']);
+  });
+
   // 抜けた計算は捨てたセルを忘れない。忘れると、次の確定が計算し直したセルを返し損ねる。
   it('もう一度 commit すれば、書き込みの下流をすべて返す', () => {
     const failing = { now: false };

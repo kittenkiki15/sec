@@ -285,8 +285,17 @@ export function evaluateMacro(source: string, sheet: TransactionalSheet): Evalua
   }
 
   // **エラーで終わったマクロの書き込みは残らない**（要件 F-3-4、ADR-0027）。
-  if (value.kind === 'error') transaction.rollback();
-  else transaction.commit();
+  if (value.kind === 'error') {
+    transaction.rollback();
+    return { value };
+  }
+  try {
+    transaction.commit();
+  } catch (error) {
+    // 確定で初めて計算する下流の数式が抜けても、書きかけのシートを残さない。
+    transaction.rollback();
+    throw error;
+  }
   return { value };
 }
 
