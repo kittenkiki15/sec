@@ -8,8 +8,8 @@
  * **セル参照は `Cell` に評価され、理解しないメッセージは保持する値へ委譲される**
  * （§4.2、ADR-0008）。**委譲の規則 1 と規則 2 は `evaluateSend` が持ち、**
  * `Cell` 自身が理解するセレクタは `sendToCell` にある。
- * **マクロは本体の文の列と一時変数まで評価できる**（§7.2、M4 段階 1）。まだ評価できないのは
- * マクロのブロックの文の列（段階 2）とセルへの代入（段階 4）で、どちらも例外になる。
+ * **マクロは本体とブロックの文の列と一時変数まで評価できる**（§7.2、§7.5、M4 段階 1・2）。
+ * まだ評価できないのはブロックの中の `^`（段階 3）とセルへの代入（段階 4）で、どちらも例外になる。
  * ゴールデンテストの側はそのケースに `!pending` の印を付けてある（ADR-0019）。
  *
  * **エラーは値として返し、例外にしない**（要件 F-8-1）。例外にすると評価の途中で制御が飛び、
@@ -32,6 +32,7 @@ import { StepBudget } from './budget.ts';
 import { makeRange } from './range.ts';
 import { sendMessage } from './send.ts';
 import {
+  type Binding,
   type BlockValue,
   type CellValue,
   type CellValues,
@@ -188,9 +189,16 @@ export function evaluateParsedFormula(
 export function evaluateMacro(source: string, cells: CellValues = EMPTY_CELLS): Evaluation {
   const parsed = parseOrFail(parseMacroBody, source);
   if (parsed.kind === 'failed') return parsed.evaluation;
+  const body = parsed.tree;
   // **予算はマクロ 1 回の実行に 1 つ**（要件 N-5）。文ごとに作り直すと、上限に届かない文を
   // 並べるだけでいくらでも長く走れてしまう。
-  return { value: withinStack(() => runStatements(parsed.tree, new StepBudget(), cells)) };
+  const value = withinStack(() =>
+    runStatements(body, declareTemporaries(EMPTY_ENVIRONMENT, body), new StepBudget(), cells),
+  );
+  // `^` が無ければ `nil`（§7.2）。マクロは値を返すために書くとは限らない。
+  // `^` は列の最後にしか書けない（構文解析器が弾く）ので、最後の文だけを見ればよい。
+  if (value.kind === 'error' || body.statements.at(-1)?.kind === 'return') return { value };
+  return { value: NIL };
 }
 
 /**
@@ -211,40 +219,57 @@ function withinStack(run: () => Value): Value {
 }
 
 /**
- * 一時変数を用意して、文の列を順に評価する（§7.2）。
+ * 一時変数を宣言した環境を作る（§7.2、§7.5）。宣言しただけの一時変数は `nil`。
+ *
+ * **呼ぶたびに新しい入れ物を作る。** ブロックの一時変数は起動ごとに別のもので
+ * （ADR-0029）、再帰の各段が同じ入れ物を使うと内側の起動が外側の値を書き換える。
+ * **外側の束縛は写すだけ**なので、入れ物は外側と共有される（`Binding`）。
+ */
+function declareTemporaries(outer: Environment, body: Body): Map<string, Binding> {
+  const environment = new Map(outer);
+  for (const name of body.temporaries) environment.set(name, { value: NIL });
+  return environment;
+}
+
+/**
+ * 文の列を順に評価し、**最後の文の値**を返す（§7.2、§7.5）。代入は値を持たないので `nil`。
+ * `^` の文はその式の値で、`^` として扱うのは呼ぶ側である（マクロの本体とブロックで違う）。
  *
  * **文の値がエラーなら、そこで打ち切ってそのエラーを列の値にする**（ADR-0027 の案 A）。
  * 値を捨てる文でも、一時変数への代入の右辺でも同じで、**エラーを黙って捨てる経路を作らない。**
  * §3.6 の「最初に生じたエラーを返す」を文の列に当てたものである。
- *
- * **一時変数は書き換えられる束縛**なので、環境をここだけ可変の `Map` で持つ。
- * 数式の環境（ブロックの引数）は作ったら変わらない。
  */
-function runStatements(body: Body, budget: StepBudget, cells: CellValues): Value {
-  // 宣言しただけの一時変数は `nil`（§7.2）。
-  const environment = new Map<string, ReceivedValue>(body.temporaries.map((name) => [name, NIL]));
-
+function runStatements(
+  body: Body,
+  environment: Environment,
+  budget: StepBudget,
+  cells: CellValues,
+): Value {
+  let last: Value = NIL;
   for (const statement of body.statements) {
     switch (statement.kind) {
-      // `^` は列の最後にしか書けない（構文解析器が弾く）ので、ここで列が終わる。
       case 'return':
-        return evaluate(statement.value, environment, budget, cells);
+        last = evaluate(statement.value, environment, budget, cells);
+        break;
       case 'assign': {
         if (statement.target.kind === 'cell') throw new NotImplementedError('セルへの代入');
         const value = evaluate(statement.value, environment, budget, cells);
         // 右辺がエラーなら代入しない。エラーを変数に抱えて先へ進めない（ADR-0027）。
         if (value.kind === 'error') return value;
-        environment.set(statement.target.name, value);
+        const binding = environment.get(statement.target.name);
+        // 左辺は宣言済みの一時変数に限る（構文解析器が弾く、§7.3）ので、ここへは来ない。
+        // 来たとしても、宣言の無い名前を読んだときと同じ `#Ref` にしておく（§4.2）。
+        if (binding === undefined) return REF;
+        binding.value = value;
+        last = NIL;
         break;
       }
-      default: {
-        const value = evaluate(statement, environment, budget, cells);
-        if (value.kind === 'error') return value;
-      }
+      default:
+        last = evaluate(statement, environment, budget, cells);
     }
+    if (last.kind === 'error') return last;
   }
-  // `^` が無ければ `nil`（§7.2）。マクロは値を返すために書くとは限らない。
-  return NIL;
+  return last;
 }
 
 const EMPTY_ENVIRONMENT: Environment = new Map();
@@ -266,7 +291,7 @@ export function evaluateLiteral(node: LiteralNode): Value {
 /**
  * リテラル配列の要素は式ではなくリテラルなので（§2.4）、同じ経路で値にできる。
  *
- * @param environment その位置で見えている束縛（§5.1）。ブロックの引数だけが入る
+ * @param environment その位置で見えている束縛。ブロックの引数（§5.1）とマクロの一時変数（§7.2）
  * @param budget 1 回の評価が使えるステップ数（要件 N-5、§7.8）
  * @param cells セルの値を答えるもの（§4.2）
  */
@@ -325,10 +350,10 @@ function evaluate(
       if (address === null || !isResolvable(address)) return REF;
       return { kind: 'cell', address, values: cells };
     }
-    // 束縛されている識別子はブロックの引数（§5.1）。**それ以外は解決できない**——
+    // 束縛されている識別子はブロックの引数（§5.1）か一時変数（§7.2）。**それ以外は解決できない**——
     // 数式から参照できる名前が存在しないため（名前付き範囲は MVP の範囲外、§4.2）。
     case 'identifier':
-      return environment.get(node.name) ?? REF;
+      return environment.get(node.name)?.value ?? REF;
   }
 }
 
@@ -438,12 +463,9 @@ function sendToCell(cell: CellValue, selector: string, args: readonly ReceivedVa
 }
 
 /**
- * ブロックの本体を評価する。**数式のブロックの本体は式ちょうど 1 つ**（§5.1）。
- * 代入が書けない以上、一時変数を宣言しても使い道が無く、文を並べる意味も無いためである。
- *
- * 文の列と一時変数を持てるのはマクロのブロックで（§7.5）、`parseFormula` はそれを弾く。
- * **弾かれた形がここへ来ることはないが、木の型は両方を許す**ので、来たときは
- * 未実装として扱う。黙って別の値を返さないのはリテラル以外のノードと同じ理由。
+ * ブロックの本体を評価する。**値は最後の文の値**で（§7.5）、数式のブロックは
+ * 文が式ちょうど 1 つの場合にあたる（§5.1）。数式に文の列と一時変数が現れないことは
+ * `parseFormula` が保証するので、**ここで開始記号を区別しない。**
  *
  * **引数の数の検査をここに置いた**（§5.1）。`value:` の送信だけでなく、条件式が
  * ブロックを引数なしで評価する経路（§5.2）にも同じ規則が当たる必要があるためで、
@@ -462,36 +484,32 @@ function invokeBlock(
   const environment = bindParameters(block, args);
   if (environment === null) return { kind: 'error', error: 'TypeError' };
 
-  const [statement] = block.body.statements;
-  if (
-    statement === undefined ||
-    block.body.statements.length !== 1 ||
-    block.body.temporaries.length > 0 ||
-    statement.kind === 'assign' ||
-    statement.kind === 'return'
-  ) {
-    throw new NotImplementedError('マクロのブロック');
+  // ブロックの中の `^` はマクロ全体を終える（§7.5）。ブロックの値として返すと
+  // 外側の文が続いてしまうので、実装するまでは黙って別の値を返さない（段階 3）。
+  if (block.body.statements.at(-1)?.kind === 'return') {
+    throw new NotImplementedError('ブロックの中の ^');
   }
 
-  return evaluate(statement, environment, budget, cells);
+  return runStatements(block.body, environment, budget, cells);
 }
 
 /**
- * ブロックが捕まえた環境に引数を重ねる。**名前が衝突することはない**（外側と同じ名前は
- * 宣言できず、構文解析器が既に弾いている）ので、上書きの向きを考えずに済む。
+ * ブロックが捕まえた環境に引数と一時変数を重ねる。**名前が衝突することはない**（外側と
+ * 同じ名前は宣言できず、構文解析器が既に弾いている）ので、上書きの向きを考えずに済む。
  *
  * @returns 本体を評価する環境。**引数の数が合わなければ `null`**（§5.1 の `#TypeError`）
  */
 function bindParameters(block: BlockValue, args: readonly ReceivedValue[]): Environment | null {
   if (block.parameters.length !== args.length) return null;
-  if (args.length === 0) return block.environment;
+  // 数式のブロックの大半はここを通る。写さずに済むなら写さない。
+  if (args.length === 0 && block.body.temporaries.length === 0) return block.environment;
 
-  const bindings = new Map(block.environment);
+  const bindings = declareTemporaries(block.environment, block.body);
   for (const [index, value] of args.entries()) {
     const name = block.parameters[index];
     // 数が合うことは上で確かめてあるので、ここへは来ない。
     if (name === undefined) return null;
-    bindings.set(name, value);
+    bindings.set(name, { value });
   }
   return bindings;
 }
