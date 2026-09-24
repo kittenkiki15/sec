@@ -539,9 +539,9 @@ describe('evaluateFormula の実行上限', () => {
   /** `#(` を重ねた入力。入れ子の深さがそのまま再帰の深さになる。 */
   const nested = (depth: number): string => '#('.repeat(depth) + ')'.repeat(depth);
 
-  // 深い入れ子は、構文解析器と評価器のどちらの再帰も尽きさせうる。どちらで尽きても
-  // 仕様外の例外（RangeError）を漏らさず、#Timeout の値にする（§7.8）。
-  // **どの深さで尽きるかはスタックの大きさ次第なので、境界そのものは固定しない。**
+  // 深い入れ子は構文解析器の再帰を尽きさせうる。仕様外の例外（RangeError）を漏らさず、
+  // #Timeout の値にする（§7.8）。**構文解析器は明示的な上限を持たないので、どの深さで
+  // 尽きるかはスタック次第で、境界は固定しない。** 評価器の境界は 256（ADR-0033）。
   it('再帰が尽きる深さでは #Timeout を値として返す', () => {
     expect(evaluatedValue(nested(100000))).toEqual({ kind: 'error', error: 'Timeout' });
   });
@@ -1014,6 +1014,84 @@ describe('evaluateMacro の実行上限（§7.8）', () => {
   it('上限は 1 回の評価ごとに数え直す', () => {
     expect(ran('(1 to: 1e400) sum. ^ 1')).toBe('#Timeout');
     expect(ran('^ (1 to: 1000) sum')).toBe('500500');
+  });
+});
+
+describe('evaluateMacro の再帰深度の上限（§7.8、ADR-0033）', () => {
+  /**
+   * `depth` 段潜ってから `run` を呼ぶ。**スタックを先に使っておく**ための道具で、
+   * 測るのも使うのも同じ関数にするので、1 段の大きさの違いを考えずに済む。
+   */
+  function descend<T>(depth: number, run: () => T): T {
+    return depth === 0 ? run() : descend(depth - 1, run);
+  }
+
+  /** `descend` が潜れる段数。スタックの大きさを `descend` の段で表したもの。 */
+  function stackCapacity(): number {
+    let reached = 0;
+    const probe = (depth: number): void => {
+      reached = depth;
+      probe(depth + 1);
+    };
+    try {
+      probe(0);
+    } catch (error) {
+      if (!(error instanceof RangeError)) throw error;
+    }
+    return reached;
+  }
+
+  /** 値を返したか。**尽きたかどうかだけ**を見る（経路ごとに返す値が違う）。 */
+  const completes = (source: string): boolean => ran(source) !== '#Timeout';
+
+  /** `n` 回自分を呼ぶマクロ。再帰の 1 段は `step` の中の `f value: n - 1` を通る。 */
+  const recursion = (step: string, n: number): string =>
+    `| f | f := [:n | n = 0 ifTrue: [0] ifFalse: [${step}]]. ^ f value: ${n}`;
+
+  /** 値を返す最大の `n`。**単調**（深く潜るほど尽きやすい）なので二分探索で足りる。 */
+  function deepest(step: string): number {
+    let low = 0;
+    let high = 2000;
+    while (low < high) {
+      const middle = Math.ceil((low + high) / 2);
+      if (completes(recursion(step, middle))) low = middle;
+      else high = middle - 1;
+    }
+    return low;
+  }
+
+  // 評価器が本体を呼び戻す経路はそれぞれ JavaScript の段の積み方が違う。
+  // **どの経路でも、止めるのはスタックではなく上限でなければならない。**
+  const paths = [
+    ['value:', 'f value: n - 1'],
+    ['collect:', '(#(1) collect: [:x | f value: n - 1]) first'],
+    ['do:', '#(1) do: [:x | f value: n - 1]'],
+    ['inject:into:', '#(1) inject: 0 into: [:a :x | f value: n - 1]'],
+    ['select:', '#(1) select: [:x | (f value: n - 1) isNil]'],
+    ['reject:', '#(1) reject: [:x | (f value: n - 1) isNil]'],
+    ['detect:ifNone:', '#(1) detect: [:x | (f value: n - 1) isNil] ifNone: [0]'],
+    ['sorted:', '(#(1 2) sorted: [:a :b | (f value: n - 1) isNil]) first'],
+    ['whileTrue:', '[f value: n - 1. false] whileTrue: [1]'],
+    ['and:', 'true and: [(f value: n - 1) isNil]'],
+    ['ifNil:', 'nil ifNil: [f value: n - 1]'],
+  ] as const;
+
+  // **スタックの 3 分の 1 を先に使っても、潜れる深さが変わらない。**
+  // 止めているのがスタックなら、残りが減った分だけ浅いところで尽きる。上限なら変わらない。
+  // 環境ごとのスタックの大きさの違いに、少なくともこの幅で耐えることの確かめでもある。
+  it.each(paths)('%s を通る再帰も、スタックより先に上限で止まる', (_, step) => {
+    const limit = deepest(step);
+    expect(completes(recursion(step, limit + 1))).toBe(false);
+
+    const consumed = Math.floor(stackCapacity() / 3);
+    expect(descend(consumed, () => completes(recursion(step, limit)))).toBe(true);
+  });
+
+  // 上限を超えた評価は打ち切られるが、**深さは評価の途中の状態であって持ち越さない。**
+  // 1 回まわり終えた繰り返しの本体が深さを返さなければ、回数だけで上限に達する。
+  it('繰り返しと列挙は深さを積まない', () => {
+    expect(ran('| i | i := 0. [i < 5000] whileTrue: [i := i + 1]. ^ i')).toBe('5000');
+    expect(ran('| s | s := 0. (1 to: 5000) do: [:x | s := s + x]. ^ s')).toBe('12502500');
   });
 });
 

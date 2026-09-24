@@ -23,7 +23,7 @@
  * `evaluate.test.mjs` の対象へ足していく運用の側（ADR-0019）。
  */
 
-import type { StepBudget } from './budget.ts';
+import type { EvaluationBudget } from './budget.ts';
 import {
   absoluteValue,
   add,
@@ -366,7 +366,7 @@ function sendToBlock(
   selector: string,
   args: readonly ReceivedValue[],
   invoke: InvokeBlock,
-  budget: StepBudget,
+  budget: EvaluationBudget,
 ): Value | undefined {
   const [first] = args;
   // 引数の型は受け手のブロックを評価する前に問う（§5.2 の条件式と同じ理由、§7.6）。
@@ -394,7 +394,7 @@ function repeatWhileTrue(
   test: BlockValue,
   body: BlockValue,
   invoke: InvokeBlock,
-  budget: StepBudget,
+  budget: EvaluationBudget,
 ): Value {
   while (budget.spend()) {
     const continues = invoke(test, []);
@@ -419,7 +419,7 @@ function sendToSequence(
   selector: string,
   args: readonly ReceivedValue[],
   invoke: InvokeBlock,
-  budget: StepBudget,
+  budget: EvaluationBudget,
 ): Value | undefined {
   const [first, second] = args;
 
@@ -552,7 +552,7 @@ function dispatch(
   selector: string,
   args: readonly ReceivedValue[],
   invoke: InvokeBlock,
-  budget: StepBudget,
+  budget: EvaluationBudget,
 ): Value | undefined {
   switch (receiver.kind) {
     case 'integer':
@@ -597,7 +597,7 @@ export function sendMessage(
   selector: string,
   args: readonly ReceivedValue[],
   invoke: InvokeBlock,
-  budget: StepBudget,
+  budget: EvaluationBudget,
 ): Value {
   // 検査の順序 1（§6.0）: 受け手がそのセレクタを持たない。
   return (

@@ -30,7 +30,7 @@ import {
   parseMacroDefinition,
   type SendNode,
 } from '../syntax/parser.ts';
-import { StepBudget } from './budget.ts';
+import { EvaluationBudget } from './budget.ts';
 import { makeRange } from './range.ts';
 import { sendMessage } from './send.ts';
 import {
@@ -253,7 +253,9 @@ export function evaluateParsedFormula(
   // 数式の最上位に束縛は無い。名前を導入できるのはブロックの引数だけである（§5.1）。
   // **予算は評価ごとに作り直す**ので、使い切った評価が次の評価に影響しない。
   const sheet = readOnly(cells);
-  return { value: withinStack(() => evaluate(tree, EMPTY_ENVIRONMENT, new StepBudget(), sheet)) };
+  return {
+    value: withinStack(() => evaluate(tree, EMPTY_ENVIRONMENT, new EvaluationBudget(), sheet)),
+  };
 }
 
 /**
@@ -350,7 +352,7 @@ function runInTransaction(
     // **セルは閉じる前に値まで解決する**（ADR-0031）。巻き戻した後に読めば開始前の値になり、
     // マクロが終わった時点の値ではなくなる。解決した値がエラーなら失敗として巻き戻す。
     value = heldValue(
-      withinStack(() => runMacroBody(body, environment, new StepBudget(), transaction)),
+      withinStack(() => runMacroBody(body, environment, new EvaluationBudget(), transaction)),
     );
   } catch (error) {
     // 評価器の外の失敗（実装の誤り）でも、書きかけのシートを残さない。
@@ -400,7 +402,7 @@ function rollbackAndRethrow(transaction: MacroTransaction, error: unknown): neve
 function runMacroBody(
   body: Body,
   outer: Environment,
-  budget: StepBudget,
+  budget: EvaluationBudget,
   sheet: MacroSheet,
 ): Value {
   try {
@@ -416,12 +418,12 @@ function runMacroBody(
 }
 
 /**
- * 深い入れ子は評価器の再帰も尽きさせうる。超過した評価は `#Timeout`（§7.8）。
+ * スタックが尽きた評価を `#Timeout` にする（§7.8）。
  *
- * **これは上限そのものではなく安全網である。** ステップ数の上限は `StepBudget` が
- * 持つが（要件 N-5、CLAUDE.md 規約 4）、**再帰の深さはステップ数では表せない。**
- * 1 ステップしか使わない式でも入れ子が深ければスタックが尽きるので、両方が要る。
- * 明示的な再帰深度の上限は M4 の段階 7 で入れる（ADR-0027）。
+ * **これは上限そのものではなく安全網である**（ADR-0033）。評価の入れ子の深さは
+ * `EvaluationBudget` が数えるので、評価器の再帰がここへ届くことはない。残るのは
+ * 予算の外の再帰で、**セルの読みが上流の数式を評価する枠は予算を持ち越さない**し、
+ * 値の表記（`printValue`）は値の入れ子の深さだけ潜る。そこで尽きても例外を漏らさない。
  */
 function withinStack(run: () => Value): Value {
   try {
@@ -456,7 +458,7 @@ function declareTemporaries(outer: Environment, body: Body): Map<string, Binding
 function runStatements(
   body: Body,
   environment: Environment,
-  budget: StepBudget,
+  budget: EvaluationBudget,
   sheet: MacroSheet,
 ): Value {
   let last: Value = NIL;
@@ -521,25 +523,42 @@ const EMPTY_ENVIRONMENT: Environment = new Map();
  */
 export function evaluateLiteral(node: LiteralNode): Value {
   // リテラルにセル参照は現れない（§2）ので、どのセルも空のまま評価してよい。
-  return evaluate(node, EMPTY_ENVIRONMENT, new StepBudget(), readOnly(EMPTY_CELLS));
+  return evaluate(node, EMPTY_ENVIRONMENT, new EvaluationBudget(), readOnly(EMPTY_CELLS));
 }
 
 /**
  * リテラル配列の要素は式ではなくリテラルなので（§2.4）、同じ経路で値にできる。
  *
  * @param environment その位置で見えている束縛。ブロックの引数（§5.1）とマクロの一時変数（§7.2）
- * @param budget 1 回の評価が使えるステップ数（要件 N-5、§7.8）
+ * @param budget 1 回の評価が使えるステップ数と深さ（要件 N-5、§7.8）
  * @param sheet 読み書きするシート（§4.2、§7.4）。数式では書き込めない
  */
 function evaluate(
   node: Expression | LiteralNode,
   environment: Environment,
-  budget: StepBudget,
+  budget: EvaluationBudget,
   sheet: MacroSheet,
 ): Value {
   // **1 ノードの評価が 1 ステップ。** 尽きた評価は中断して `#Timeout`（§7.8）。
   if (!budget.spend()) return TIMEOUT;
+  // **1 ノードの評価が 1 段。** 評価器の再帰はすべてここを通る（ブロックの起動も本体の文を
+  // ここで評価する）ので、1 箇所で数えれば全経路に上限が掛かる（ADR-0033）。
+  if (!budget.enter()) return TIMEOUT;
+  try {
+    return evaluateNode(node, environment, budget, sheet);
+  } finally {
+    // 非局所リターン（`MacroReturn`）は例外で段を飛び越えるので、戻り道はここに置く。
+    budget.leave();
+  }
+}
 
+/** `evaluate` の本体。予算を払い終えたノードを値にする。 */
+function evaluateNode(
+  node: Expression | LiteralNode,
+  environment: Environment,
+  budget: EvaluationBudget,
+  sheet: MacroSheet,
+): Value {
   switch (node.kind) {
     case 'integer':
       return { kind: 'integer', value: node.value };
@@ -603,7 +622,7 @@ function evaluate(
 function evaluateSend(
   node: SendNode,
   environment: Environment,
-  budget: StepBudget,
+  budget: EvaluationBudget,
   sheet: MacroSheet,
 ): Value {
   const receiver = evaluate(node.receiver, environment, budget, sheet);
@@ -708,13 +727,13 @@ function sendToCell(cell: CellValue, selector: string, args: readonly ReceivedVa
  * 呼び出しの側それぞれに書くと**足し忘れた 1 つが検査を抜ける。**
  *
  * @param args 引数に束ねる値。セレクタの綴りが数を決める（`value:value:` なら 2 つ）
- * @param budget 1 回の評価が使えるステップ数（要件 N-5、§7.8）
+ * @param budget 1 回の評価が使えるステップ数と深さ（要件 N-5、§7.8）
  * @param sheet 読み書きするシート（§4.2、§7.4）。本体の中のセル参照と代入が使う
  */
 function invokeBlock(
   block: BlockValue,
   args: readonly ReceivedValue[],
-  budget: StepBudget,
+  budget: EvaluationBudget,
   sheet: MacroSheet,
 ): Value {
   const environment = bindParameters(block, args);
