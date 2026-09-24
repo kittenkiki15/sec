@@ -308,6 +308,22 @@ describe('sec run', () => {
       expect(timeouts).toEqual([]);
     });
 
+    // Node のタイマーは 2^31 - 1 ms を超える遅延を 1ms に丸める。受け付けると、
+    // 長く待つ指定がほぼ即座の打ち切りに化ける（AI レビューの指摘）。
+    it('タイマーが扱える最大の 2147483647 は受け付ける', async () => {
+      const { host, timeouts } = hostWith({ 'm.st': '^ 1' });
+      await runCommand(['run', 'm.st', '--timeout', '2147483647'], host);
+      expect(timeouts).toEqual([2147483647]);
+    });
+
+    it('2147483648 以上は終了コード 2', async () => {
+      const { host, timeouts } = hostWith({ 'm.st': '^ 1' });
+      const result = await runCommand(['run', 'm.st', '--timeout', '2147483648'], host);
+      expect(result.exitCode).toBe(2);
+      expect(result.stderr).toContain('2147483647');
+      expect(timeouts).toEqual([]);
+    });
+
     // 打ち切ったマクロの書き込みは反映しない（ADR-0027）。--out は開始前のシートになる。
     it('超えたら #Timeout を出し、終了コード 1', async () => {
       const { host, written } = hostWith({ 'm.st': 'A1 := 9', 'in.json': '{"A1": "3"}' }, true);
