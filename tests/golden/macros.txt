@@ -8,7 +8,6 @@
 
 "宣言部を持つマクロは、!macro に起動するメッセージを添えて評価する（ADR-0018）
 !macro monthlyTotal
-!pending m4
 monthlyTotal
     | total |
     total := 3.
@@ -17,14 +16,12 @@ monthlyTotal
 
 "キーワードパターンは引数を取る。引数は本体の中で識別子として読める
 !macro from: 1 to: 3
-!pending m4
 from: start to: end
     ^ start + end
 => 4
 
 "引数はセルへの書き込みにも使える
 !macro summarize: 'Q1'
-!pending m4
 summarize: label
     A14 := label.
     ^ A14
@@ -32,7 +29,6 @@ summarize: label
 
 "引数への代入は書けない。書き換えたければ一時変数を宣言して写す（§7.3）
 !macro double: 2
-!pending m4
 double: n
     n := n * 2.
     ^ n
@@ -40,23 +36,56 @@ double: n
 
 "二項セレクタのパターンは認めない。マクロの名前に記号は使わない
 !macro + 1
-!pending m4
 + other
     ^ other
 => #Syntax
 
 "宣言部だけで本体が無いものは書けない（§7.2）
 !macro monthlyTotal
-!pending m4
 monthlyTotal
 => #Syntax
 
 "パターンと違うセレクタを送れば理解しない
 !macro yearlyTotal
-!pending m4
 monthlyTotal
     ^ 1
 => #DoesNotUnderstand
+
+"起動するメッセージの引数は §6.0 の順序で扱う。値がエラーなら、マクロを始めずにそのエラーで終わる
+!macro double: 1 / 0
+double: n
+    A1 := 1.
+    ^ 3
+=> #DivideByZero
+
+"引数のエラーは、パターンと違うセレクタの #DoesNotUnderstand より先に出る（受け手 → 引数 → 送信）
+!macro yearlyTotal: 1 / 0
+monthlyTotal: n
+    ^ 3
+=> #DivideByZero
+
+"定義が読めなければ、引数のエラーより先に #Syntax。構文エラーは評価より前に決まる
+!macro double: 1 / 0
+double: n
+    n := 1.
+    ^ n
+=> #Syntax
+
+"引数がセルなら、セルのまま持つ（一時変数と同じ、ADR-0028）。後の書き込みを読む
+!macro show: A1
+!A1 := 1
+show: cell
+    A1 := 5.
+    ^ cell
+=> 5
+
+"セルのまま持つので、起動した時点のセルの値がエラーでもマクロは始まる
+!macro show: A1
+!A1 := =1 / 0
+show: cell
+    A1 := 2.
+    ^ cell
+=> 2
 
 "--- 本体は文の列 ---
 
