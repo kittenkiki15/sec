@@ -424,6 +424,30 @@ describe('LiveSheet のトランザクション（要件 F-3-4、ADR-0027 の案
     expect(cellValue(live, 'B1')).toBe('true');
   });
 
+  // **読まれたときの計算も浅い方から回す**（「長い鎖の根を書き換えても評価できる」と同じ理由）。
+  // 捨てたセルの上流を潜って評価すると、鎖の長さがそのまま再帰の深さになる。
+  it('長い鎖の根に書き込んでから末端を読んでも評価できる', () => {
+    const contents: Record<string, string> = { A1: '1' };
+    for (let row = 2; row <= 1000; row += 1) contents[`A${row}`] = `=A${row - 1} + 1`;
+    const live = liveSheetOf(contents);
+
+    const transaction = live.begin();
+    transaction.put(addressOf('A1'), '2');
+    expect(printValue(transaction.values(addressOf('A1000')))).toBe('1001');
+    transaction.commit();
+  });
+
+  it('読まれたセルの上流でも、読まれたセルに届かない枝は計算しない', () => {
+    const log: string[] = [];
+    const live = liveSheetOf({ ...contents, D1: '=A1 - 1' }, observing(log));
+    log.length = 0;
+
+    const transaction = live.begin();
+    transaction.put(addressOf('A1'), '5');
+    transaction.values(addressOf('C1'));
+    expect([...log].sort()).toEqual(['A1', 'B1', 'C1']);
+  });
+
   it('rollback の後の値は、開始前の内容からフル再計算した値と一致する（要件 F-4-4）', () => {
     const before = { A1: '1', A2: '=A1 + A3', A3: '=A2', B1: '=(A1 to: A3) size' };
     const live = liveSheetOf(before);
