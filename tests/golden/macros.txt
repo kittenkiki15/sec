@@ -182,14 +182,12 @@ a := 1.
 
 "外側と同じ名前を内側で宣言することはできない
 !macro
-!pending m4
 | a |
 ^ [| a | a] value
 => #Syntax
 
 "ブロック引数と同じ名前の一時変数も宣言できない
 !macro
-!pending m4
 ^ [:x | | x | x] value: 1
 => #Syntax
 
@@ -238,7 +236,6 @@ a := 1 / 0.
 
 "ブロックの中でも ^ は文の列の最後にだけ書ける
 !macro
-!pending m4
 ^ [^ 1. 2] value
 => #Syntax
 
@@ -341,7 +338,6 @@ i := 0.
 
 "受け手がブロックでなければ理解しない
 !macro
-!pending m4
 ^ true whileTrue: [1]
 => #DoesNotUnderstand
 
@@ -371,7 +367,6 @@ i := 0.
 
 "ブロックは一時変数を通して自分を呼べる。止まる再帰は値を返す
 !macro
-!pending m4
 | f |
 f := [:n | n = 0 ifTrue: [0] ifFalse: [n + (f value: n - 1)]].
 ^ f value: 10
@@ -379,7 +374,6 @@ f := [:n | n = 0 ifTrue: [0] ifFalse: [n + (f value: n - 1)]].
 
 "止まらない再帰は再帰深度の上限で中断する（ADR-0027）
 !macro
-!pending m4
 | f |
 f := [:n | f value: n + 1].
 ^ f value: 1
